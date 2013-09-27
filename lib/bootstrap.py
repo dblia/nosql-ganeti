@@ -34,7 +34,6 @@ from ganeti import rpc
 from ganeti import ssh
 from ganeti import utils
 from ganeti import errors
-from ganeti import config
 from ganeti import constants
 from ganeti import objects
 from ganeti import ssconf
@@ -46,6 +45,7 @@ from ganeti import luxi
 from ganeti import jstore
 from ganeti import pathutils
 
+import ganeti.config as config
 
 # ec_id for InitConfig's temporary reservation manager
 _INITCONF_ECID = "initconfig-ecid"
@@ -357,7 +357,7 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
 
   """
   # TODO: complete the docstring
-  if config.ConfigWriter.IsCluster():
+  if config.GetConfigWriterClass("disk").IsCluster():
     raise errors.OpPrereqError("Cluster is already initialised",
                                errors.ECODE_STATE)
 
@@ -613,7 +613,7 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
                                     ctime=now, mtime=now,
                                     )
   InitConfig(constants.CONFIG_VERSION, cluster_config, master_node_config)
-  cfg = config.ConfigWriter(offline=True)
+  cfg = config.GetConfigWriter("disk", offline=True)
   ssh.WriteKnownHostsFile(cfg, pathutils.SSH_KNOWN_HOSTS_FILE)
   cfg.Update(cfg.GetClusterInfo(), logging.error)
   ssconf.WriteSsconfFiles(cfg.GetSsconfValues())
@@ -648,7 +648,7 @@ def InitConfig(version, cluster_config, master_node_config,
   @param cfg_file: configuration file path
 
   """
-  uuid_generator = config.TemporaryReservationManager()
+  uuid_generator = config.base.TemporaryReservationManager()
   cluster_config.uuid = uuid_generator.Generate([], utils.NewUUID,
                                                 _INITCONF_ECID)
   master_node_config.uuid = uuid_generator.Generate([], utils.NewUUID,
@@ -686,7 +686,7 @@ def FinalizeClusterDestroy(master):
   begun in cmdlib.LUDestroyOpcode.
 
   """
-  cfg = config.ConfigWriter()
+  cfg = config.GetConfigWriter("disk")
   modify_ssh_setup = cfg.GetClusterInfo().modify_ssh_setup
   runner = rpc.BootstrapRunner()
 
@@ -795,7 +795,7 @@ def MasterFailover(no_voting=False):
   try:
     # instantiate a real config writer, as we now know we have the
     # configuration data
-    cfg = config.ConfigWriter(accept_foreign=True)
+    cfg = config.GetConfigWriter("disk", accept_foreign=True)
 
     cluster_info = cfg.GetClusterInfo()
     cluster_info.master_node = new_master

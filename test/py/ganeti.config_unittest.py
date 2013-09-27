@@ -32,7 +32,6 @@ import operator
 import itertools
 
 from ganeti import bootstrap
-from ganeti import config
 from ganeti import constants
 from ganeti import errors
 from ganeti import objects
@@ -41,10 +40,13 @@ from ganeti import netutils
 from ganeti import compat
 from ganeti import cmdlib
 
-from ganeti.config import TemporaryReservationManager
+import ganeti.config as config
 
 import testutils
 import mocks
+
+TemporaryReservationManager = config.base.TemporaryReservationManager
+_CheckInstanceDiskIvNames = config.base._CheckInstanceDiskIvNames
 
 
 def _StubGetEntResolver():
@@ -66,7 +68,7 @@ class TestConfigRunner(unittest.TestCase):
 
   def _get_object(self):
     """Returns a instance of ConfigWriter"""
-    cfg = config.ConfigWriter(cfg_file=self.cfg_file, offline=True,
+    cfg = config.GetConfigWriter("disk", cfg_file=self.cfg_file, offline=True,
                               _getents=_StubGetEntResolver)
     return cfg
 
@@ -475,20 +477,20 @@ class TestCheckInstanceDiskIvNames(unittest.TestCase):
 
   def testNoError(self):
     disks = self._MakeDisks(["disk/0", "disk/1"])
-    self.assertEqual(config._CheckInstanceDiskIvNames(disks), [])
+    self.assertEqual(_CheckInstanceDiskIvNames(disks), [])
     cmdlib._UpdateIvNames(0, disks)
-    self.assertEqual(config._CheckInstanceDiskIvNames(disks), [])
+    self.assertEqual(_CheckInstanceDiskIvNames(disks), [])
 
   def testWrongNames(self):
     disks = self._MakeDisks(["disk/1", "disk/3", "disk/2"])
-    self.assertEqual(config._CheckInstanceDiskIvNames(disks), [
+    self.assertEqual(_CheckInstanceDiskIvNames(disks), [
       (0, "disk/0", "disk/1"),
       (1, "disk/1", "disk/3"),
       ])
 
     # Fix names
     cmdlib._UpdateIvNames(0, disks)
-    self.assertEqual(config._CheckInstanceDiskIvNames(disks), [])
+    self.assertEqual(_CheckInstanceDiskIvNames(disks), [])
 
 
 if __name__ == "__main__":

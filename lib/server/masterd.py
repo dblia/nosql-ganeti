@@ -40,7 +40,6 @@ import logging
 
 from optparse import OptionParser
 
-from ganeti import config
 from ganeti import constants
 from ganeti import daemon
 from ganeti import mcpu
@@ -61,6 +60,7 @@ from ganeti import runtime
 from ganeti import pathutils
 from ganeti import ht
 
+import ganeti.config as config
 
 CLIENT_REQUEST_WORKERS = 16
 
@@ -481,7 +481,7 @@ class GanetiContext(object):
     assert self.__class__._instance is None, "double GanetiContext instance"
 
     # Create global configuration object
-    self.cfg = config.ConfigWriter()
+    self.cfg = config.GetConfigWriter("disk")
 
     # Locking manager
     self.glm = locking.GanetiLockManager(
@@ -601,7 +601,7 @@ def CheckAgreement():
   """
   myself = netutils.Hostname.GetSysName()
   #temp instantiation of a config writer, used only to get the node list
-  cfg = config.ConfigWriter()
+  cfg = config.GetConfigWriter("disk")
   node_list = cfg.GetNodeList()
   del cfg
   retries = 6
@@ -642,7 +642,7 @@ def CheckAgreement():
 @rpc.RunWithRPC
 def ActivateMasterIP():
   # activate ip
-  cfg = config.ConfigWriter()
+  cfg = config.GetConfigWriter("disk")
   master_params = cfg.GetMasterNetworkParameters()
   ems = cfg.GetUseExternalMipScript()
   runner = rpc.BootstrapRunner()
@@ -677,7 +677,7 @@ def CheckMasterd(options, args):
 
   # Check the configuration is sane before anything else
   try:
-    config.ConfigWriter()
+    config.GetConfigWriter("disk")
   except errors.ConfigVersionMismatch, err:
     v1 = "%s.%s.%s" % constants.SplitVersion(err.args[0])
     v2 = "%s.%s.%s" % constants.SplitVersion(err.args[1])

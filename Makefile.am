@@ -40,6 +40,7 @@ SHELL_ENV_INIT = autotools/shell-env-init
 # Note: these are automake-specific variables, and must be named after
 # the directory + 'dir' suffix
 clientdir = $(pkgpythondir)/client
+configdir = $(pkgpythondir)/config
 hypervisordir = $(pkgpythondir)/hypervisor
 httpdir = $(pkgpythondir)/http
 masterddir = $(pkgpythondir)/masterd
@@ -98,6 +99,7 @@ DIRS = \
 	lib \
 	lib/build \
 	lib/client \
+	lib/config \
 	lib/confd \
 	lib/http \
 	lib/hypervisor \
@@ -249,7 +251,6 @@ pkgpython_PYTHON = \
 	lib/cli.py \
 	lib/cmdlib.py \
 	lib/compat.py \
-	lib/config.py \
 	lib/constants.py \
 	lib/daemon.py \
 	lib/errors.py \
@@ -292,6 +293,11 @@ client_PYTHON = \
 	lib/client/gnt_network.py \
 	lib/client/gnt_os.py \
 	lib/client/gnt_storage.py
+
+config_PYTHON = \
+	lib/config/__init__.py \
+	lib/config/base.py \
+	lib/config/default.py
 
 hypervisor_PYTHON = \
 	lib/hypervisor/__init__.py \
@@ -1194,6 +1200,7 @@ all_python_code = \
 	$(python_tests) \
 	$(pkgpython_PYTHON) \
 	$(client_PYTHON) \
+	$(config_PYTHON) \
 	$(hypervisor_PYTHON) \
 	$(rapi_PYTHON) \
 	$(server_PYTHON) \
