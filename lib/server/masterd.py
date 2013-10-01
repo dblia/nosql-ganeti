@@ -44,7 +44,6 @@ from ganeti import constants
 from ganeti import daemon
 from ganeti import mcpu
 from ganeti import opcodes
-from ganeti import jqueue
 from ganeti import locking
 from ganeti import luxi
 from ganeti import utils
@@ -61,6 +60,7 @@ from ganeti import pathutils
 from ganeti import ht
 
 import ganeti.config as config
+import ganeti.jqueue as jqueue
 
 CLIENT_REQUEST_WORKERS = 16
 
@@ -496,7 +496,7 @@ class GanetiContext(object):
     self.rpc = rpc.RpcRunner(self.cfg, self.glm.AddToLockMonitor)
 
     # Job queue
-    self.jobqueue = jqueue.JobQueue(self)
+    self.jobqueue = jqueue.GetJobQueue("disk", context=self)
 
     # setting this also locks the class against attribute modifications
     self.__class__._instance = self
@@ -533,11 +533,12 @@ class GanetiContext(object):
     """Removes a node from the configuration and lock manager.
 
     """
+    node = self.cfg.GetNodeInfo(name)
     # Remove node from configuration
     self.cfg.RemoveNode(name)
 
     # Notify job queue
-    self.jobqueue.RemoveNode(name)
+    self.jobqueue.RemoveNode(node)
 
     # Remove the node from the Ganeti Lock Manager
     self.glm.remove(locking.LEVEL_NODE, name)

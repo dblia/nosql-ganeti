@@ -40,14 +40,26 @@ except ImportError:
 from ganeti import constants
 from ganeti import utils
 from ganeti import errors
-from ganeti import jqueue
 from ganeti import opcodes
 from ganeti import compat
 from ganeti import mcpu
 from ganeti import query
 from ganeti import workerpool
 
+import ganeti.jqueue as jqueue
+
 import testutils
+
+_JobChangesWaiter = jqueue.default._JobChangesWaiter
+_JobFileChangesWaiter = jqueue.default._DiskJobFileChangesWaiter
+_WaitForJobChangesHelper = jqueue.default._DiskWaitForJobChangesHelper
+_EncodeOpError = jqueue.base._EncodeOpError
+_QueuedOpCode = jqueue.base._QueuedOpCode
+_QueuedJob = jqueue.base._QueuedJob
+_JobChangesChecker = jqueue.base._JobChangesChecker
+_JobDependencyManager = jqueue.base._JobDependencyManager
+_JobProcessor = jqueue.base._JobProcessor
+_EvaluateJobProcessorResult = jqueue.base._EvaluateJobProcessorResult
 
 
 class _FakeJob:
@@ -89,7 +101,7 @@ class _FakeJob:
 class TestJobChangesChecker(unittest.TestCase):
   def testStatus(self):
     job = _FakeJob(9094, constants.JOB_STATUS_QUEUED)
-    checker = jqueue._JobChangesChecker(["status"], None, None)
+    checker = _JobChangesChecker(["status"], None, None)
     self.assertEqual(checker(job), ([constants.JOB_STATUS_QUEUED], []))
 
     job.SetStatus(constants.JOB_STATUS_RUNNING)
@@ -103,7 +115,7 @@ class TestJobChangesChecker(unittest.TestCase):
 
   def testStatusWithPrev(self):
     job = _FakeJob(12807, constants.JOB_STATUS_QUEUED)
-    checker = jqueue._JobChangesChecker(["status"],
+    checker = _JobChangesChecker(["status"],
                                         [constants.JOB_STATUS_QUEUED], None)
     self.assert_(checker(job) is None)
 
@@ -113,14 +125,14 @@ class TestJobChangesChecker(unittest.TestCase):
   def testFinalStatus(self):
     for status in constants.JOBS_FINALIZED:
       job = _FakeJob(2178711, status)
-      checker = jqueue._JobChangesChecker(["status"], [status], None)
+      checker = _JobChangesChecker(["status"], [status], None)
       # There won't be any changes in this status, hence it should signal
       # a change immediately
       self.assertEqual(checker(job), ([status], []))
 
   def testLog(self):
     job = _FakeJob(9094, constants.JOB_STATUS_RUNNING)
-    checker = jqueue._JobChangesChecker(["status"], None, None)
+    checker = _JobChangesChecker(["status"], None, None)
     self.assertEqual(checker(job), ([constants.JOB_STATUS_RUNNING], []))
 
     job.AddLogEntry("Hello World")
@@ -128,7 +140,7 @@ class TestJobChangesChecker(unittest.TestCase):
     self.assertEqual(job_info, [constants.JOB_STATUS_RUNNING])
     self.assertEqual(log_entries, [[0, "Hello World"]])
 
-    checker2 = jqueue._JobChangesChecker(["status"], job_info, len(log_entries))
+    checker2 = _JobChangesChecker(["status"], job_info, len(log_entries))
     self.assert_(checker2(job) is None)
 
     job.AddLogEntry("Foo Bar")
@@ -138,7 +150,7 @@ class TestJobChangesChecker(unittest.TestCase):
     self.assertEqual(job_info, [constants.JOB_STATUS_ERROR])
     self.assertEqual(log_entries, [[1, "Foo Bar"]])
 
-    checker3 = jqueue._JobChangesChecker(["status"], None, None)
+    checker3 = _JobChangesChecker(["status"], None, None)
     (job_info, log_entries) = checker3(job)
     self.assertEqual(job_info, [constants.JOB_STATUS_ERROR])
     self.assertEqual(log_entries, [[0, "Hello World"], [1, "Foo Bar"]])
@@ -163,7 +175,7 @@ class TestJobChangesWaiter(unittest.TestCase):
 
   def testClose(self):
     for wait in [False, True]:
-      waiter = jqueue._JobFileChangesWaiter(self.filename)
+      waiter = _JobFileChangesWaiter(self.filename)
       try:
         if wait:
           waiter.Wait(0.001)
@@ -174,7 +186,7 @@ class TestJobChangesWaiter(unittest.TestCase):
       self._EnsureNotifierClosed(waiter._notifier)
 
   def testChangingFile(self):
-    waiter = jqueue._JobFileChangesWaiter(self.filename)
+    waiter = _JobFileChangesWaiter(self.filename)
     try:
       self.assertFalse(waiter.Wait(0.1))
       utils.WriteFile(self.filename, data="changed")
@@ -185,7 +197,7 @@ class TestJobChangesWaiter(unittest.TestCase):
     self._EnsureNotifierClosed(waiter._notifier)
 
   def testChangingFile2(self):
-    waiter = jqueue._JobChangesWaiter(self.filename)
+    waiter = _JobChangesWaiter(self.filename)
     try:
       self.assertFalse(waiter._filewaiter)
       self.assert_(waiter.Wait(0.1))
@@ -230,7 +242,7 @@ class TestWaitForJobChangesHelper(unittest.TestCase):
     return None
 
   def testNoChanges(self):
-    wfjc = jqueue._WaitForJobChangesHelper()
+    wfjc = _WaitForJobChangesHelper()
 
     # No change
     self.assertEqual(wfjc(self.filename, self._LoadWaitingJob, ["status"],
@@ -243,30 +255,30 @@ class TestWaitForJobChangesHelper(unittest.TestCase):
                      ([constants.JOB_STATUS_WAITING], []))
 
   def testLostJob(self):
-    wfjc = jqueue._WaitForJobChangesHelper()
+    wfjc = _WaitForJobChangesHelper()
     self.assert_(wfjc(self.filename, self._LoadLostJob,
                       ["status"], None, None, 1.0) is None)
 
   def testNonExistentFile(self):
-    wfjc = jqueue._WaitForJobChangesHelper()
+    wfjc = _WaitForJobChangesHelper()
 
     filename = utils.PathJoin(self.tmpdir, "does-not-exist")
     self.assertFalse(os.path.exists(filename))
 
     result = wfjc(filename, self._LoadLostJob, ["status"], None, None, 1.0,
-                  _waiter_cls=compat.partial(jqueue._JobChangesWaiter,
+                  _waiter_cls=compat.partial(_JobChangesWaiter,
                                              _waiter_cls=NotImplemented))
     self.assertTrue(result is None)
 
   def testInotifyError(self):
     jobfile_waiter_cls = \
-      compat.partial(jqueue._JobFileChangesWaiter,
+      compat.partial(_JobFileChangesWaiter,
                      _inotify_wm_cls=_FailingWatchManager)
 
     jobchange_waiter_cls = \
-      compat.partial(jqueue._JobChangesWaiter, _waiter_cls=jobfile_waiter_cls)
+      compat.partial(_JobChangesWaiter, _waiter_cls=jobfile_waiter_cls)
 
-    wfjc = jqueue._WaitForJobChangesHelper()
+    wfjc = _WaitForJobChangesHelper()
 
     # Test if failing to watch a job file (e.g. due to
     # fs.inotify.max_user_watches being too low) raises errors.InotifyError
@@ -278,19 +290,19 @@ class TestWaitForJobChangesHelper(unittest.TestCase):
 
 class TestEncodeOpError(unittest.TestCase):
   def test(self):
-    encerr = jqueue._EncodeOpError(errors.LockError("Test 1"))
+    encerr = _EncodeOpError(errors.LockError("Test 1"))
     self.assert_(isinstance(encerr, tuple))
     self.assertRaises(errors.LockError, errors.MaybeRaise, encerr)
 
-    encerr = jqueue._EncodeOpError(errors.GenericError("Test 2"))
+    encerr = _EncodeOpError(errors.GenericError("Test 2"))
     self.assert_(isinstance(encerr, tuple))
     self.assertRaises(errors.GenericError, errors.MaybeRaise, encerr)
 
-    encerr = jqueue._EncodeOpError(NotImplementedError("Foo"))
+    encerr = _EncodeOpError(NotImplementedError("Foo"))
     self.assert_(isinstance(encerr, tuple))
     self.assertRaises(errors.OpExecError, errors.MaybeRaise, encerr)
 
-    encerr = jqueue._EncodeOpError("Hello World")
+    encerr = _EncodeOpError("Hello World")
     self.assert_(isinstance(encerr, tuple))
     self.assertRaises(errors.OpExecError, errors.MaybeRaise, encerr)
 
@@ -307,9 +319,9 @@ class TestQueuedOpCode(unittest.TestCase):
       self.assert_(op.result is None)
       self.assertEqual(op.status, constants.OP_STATUS_QUEUED)
 
-    op1 = jqueue._QueuedOpCode(opcodes.OpTestDelay())
+    op1 = _QueuedOpCode(opcodes.OpTestDelay())
     _Check(op1)
-    op2 = jqueue._QueuedOpCode.Restore(op1.Serialize())
+    op2 = _QueuedOpCode.Restore(op1.Serialize())
     _Check(op2)
     self.assertEqual(op1.Serialize(), op2.Serialize())
 
@@ -321,16 +333,16 @@ class TestQueuedOpCode(unittest.TestCase):
       self.assertEqual(op.status, constants.OP_STATUS_QUEUED)
 
     inpop = opcodes.OpTagsGet(priority=constants.OP_PRIO_HIGH)
-    op1 = jqueue._QueuedOpCode(inpop)
+    op1 = _QueuedOpCode(inpop)
     _Check(op1)
-    op2 = jqueue._QueuedOpCode.Restore(op1.Serialize())
+    op2 = _QueuedOpCode.Restore(op1.Serialize())
     _Check(op2)
     self.assertEqual(op1.Serialize(), op2.Serialize())
 
 
 class TestQueuedJob(unittest.TestCase):
   def testNoOpCodes(self):
-    self.assertRaises(errors.GenericError, jqueue._QueuedJob,
+    self.assertRaises(errors.GenericError, _QueuedJob,
                       None, 1, [], False)
 
   def testDefaults(self):
@@ -359,27 +371,27 @@ class TestQueuedJob(unittest.TestCase):
                        [[op.input.Summary() for op in job.ops]])
       self.assertFalse(job.archived)
 
-    job1 = jqueue._QueuedJob(None, job_id, ops, True)
+    job1 = _QueuedJob(None, job_id, ops, True)
     _Check(job1)
-    job2 = jqueue._QueuedJob.Restore(None, job1.Serialize(), True, False)
+    job2 = _QueuedJob.Restore(None, job1.Serialize(), True, False)
     _Check(job2)
     self.assertEqual(job1.Serialize(), job2.Serialize())
 
   def testWritable(self):
-    job = jqueue._QueuedJob(None, 1, [opcodes.OpTestDelay()], False)
+    job = _QueuedJob(None, 1, [opcodes.OpTestDelay()], False)
     self.assertFalse(job.writable)
 
-    job = jqueue._QueuedJob(None, 1, [opcodes.OpTestDelay()], True)
+    job = _QueuedJob(None, 1, [opcodes.OpTestDelay()], True)
     self.assertTrue(job.writable)
 
   def testArchived(self):
-    job = jqueue._QueuedJob(None, 1, [opcodes.OpTestDelay()], False)
+    job = _QueuedJob(None, 1, [opcodes.OpTestDelay()], False)
     self.assertFalse(job.archived)
 
-    newjob = jqueue._QueuedJob.Restore(None, job.Serialize(), True, True)
+    newjob = _QueuedJob.Restore(None, job.Serialize(), True, True)
     self.assertTrue(newjob.archived)
 
-    newjob2 = jqueue._QueuedJob.Restore(None, newjob.Serialize(), True, False)
+    newjob2 = _QueuedJob.Restore(None, newjob.Serialize(), True, False)
     self.assertFalse(newjob2.archived)
 
   def testPriority(self):
@@ -394,7 +406,7 @@ class TestQueuedJob(unittest.TestCase):
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
       self.assert_(repr(job).startswith("<"))
 
-    job = jqueue._QueuedJob(None, job_id, ops, True)
+    job = _QueuedJob(None, job_id, ops, True)
     _Check(job)
     self.assert_(compat.all(op.priority == constants.OP_PRIO_DEFAULT
                             for op in job.ops))
@@ -427,7 +439,7 @@ class TestQueuedJob(unittest.TestCase):
       opcodes.OpTestDelay(),
       ]
 
-    job = jqueue._QueuedJob(None, job_id, ops, True)
+    job = _QueuedJob(None, job_id, ops, True)
 
     self.assertTrue(compat.all(op.priority == constants.OP_PRIO_DEFAULT
                                for op in job.ops))
@@ -655,7 +667,7 @@ class TestQueuedJob(unittest.TestCase):
       }
 
     def _NewJob():
-      job = jqueue._QueuedJob(None, 1,
+      job = _QueuedJob(None, 1,
                               [opcodes.OpTestDelay() for _ in range(10)],
                               True)
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
@@ -702,9 +714,9 @@ class _FakeDependencyManager:
 
     (result_status, _) = result
 
-    if result_status == jqueue._JobDependencyManager.WAIT:
+    if result_status == _JobDependencyManager.WAIT:
       self._waiting.add(job)
-    elif result_status == jqueue._JobDependencyManager.CONTINUE:
+    elif result_status == _JobDependencyManager.CONTINUE:
       self._waiting.remove(job)
 
     return result
@@ -805,7 +817,7 @@ class _FakeExecOpCodeForProc:
 
 class _JobProcessorTestUtils:
   def _CreateJob(self, queue, job_id, ops):
-    job = jqueue._QueuedJob(queue, job_id, ops, True)
+    job = _QueuedJob(queue, job_id, ops, True)
     self.assertFalse(job.start_timestamp)
     self.assertFalse(job.end_timestamp)
     self.assertEqual(len(ops), len(job.ops))
@@ -866,14 +878,14 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
       for idx in range(len(ops)):
         self.assertRaises(IndexError, queue.GetNextUpdate)
-        result = jqueue._JobProcessor(queue, opexec, job)()
+        result = _JobProcessor(queue, opexec, job)()
         self.assertEqual(queue.GetNextUpdate(), (job, True))
         self.assertRaises(IndexError, queue.GetNextUpdate)
         if idx == len(ops) - 1:
           # Last opcode
-          self.assertEqual(result, jqueue._JobProcessor.FINISHED)
+          self.assertEqual(result, _JobProcessor.FINISHED)
         else:
-          self.assertEqual(result, jqueue._JobProcessor.DEFER)
+          self.assertEqual(result, _JobProcessor.DEFER)
 
           self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
           self.assert_(job.start_timestamp)
@@ -893,8 +905,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
       self._GenericCheckJob(job)
 
       # Calling the processor on a finished job should be a no-op
-      self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                       jqueue._JobProcessor.FINISHED)
+      self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                       _JobProcessor.FINISHED)
       self.assertRaises(IndexError, queue.GetNextUpdate)
 
   def testOpcodeError(self):
@@ -922,7 +934,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
       for idx in range(len(ops)):
         self.assertRaises(IndexError, queue.GetNextUpdate)
-        result = jqueue._JobProcessor(queue, opexec, job)()
+        result = _JobProcessor(queue, opexec, job)()
         # queued to waitlock
         self.assertEqual(queue.GetNextUpdate(), (job, True))
         # waitlock to running
@@ -933,10 +945,10 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
         if idx in (failfrom, len(ops) - 1):
           # Last opcode
-          self.assertEqual(result, jqueue._JobProcessor.FINISHED)
+          self.assertEqual(result, _JobProcessor.FINISHED)
           break
 
-        self.assertEqual(result, jqueue._JobProcessor.DEFER)
+        self.assertEqual(result, _JobProcessor.DEFER)
 
         self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
 
@@ -972,8 +984,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
       self._GenericCheckJob(job)
 
       # Calling the processor on a finished job should be a no-op
-      self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                       jqueue._JobProcessor.FINISHED)
+      self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                       _JobProcessor.FINISHED)
       self.assertRaises(IndexError, queue.GetNextUpdate)
 
   def testCancelWhileInQueue(self):
@@ -1004,8 +1016,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
     # Simulate processor called in workerpool
     opexec = _FakeExecOpCodeForProc(queue, None, None)
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
 
     # Check result
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_CANCELED)
@@ -1050,8 +1062,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
                             for op in job.ops))
 
     opexec = _FakeExecOpCodeForProc(queue, None, None)
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
 
     # Check result
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_CANCELED)
@@ -1099,8 +1111,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     opexec = _FakeExecOpCodeForProc(queue, _BeforeStart, _AfterStart)
 
     self.assertRaises(IndexError, queue.GetNextUpdate)
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
     self.assertEqual(queue.GetNextUpdate(), (job, True))
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
@@ -1145,8 +1157,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
     opexec = _FakeExecOpCodeForProc(queue, _BeforeStart, _AfterStart)
 
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
 
     # Check result
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_CANCELED)
@@ -1188,8 +1200,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     opexec = _FakeExecOpCodeForProc(queue, None, None)
 
     # Run one opcode
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.DEFER)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.DEFER)
 
     # Job goes back to queued
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
@@ -1204,8 +1216,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self.assert_(success)
 
     # Try processing another opcode (this will actually cancel the job)
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
 
     # Check result
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_CANCELED)
@@ -1224,8 +1236,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     # Simulate shutdown
     queue.StopAcceptingJobs()
 
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.DEFER)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.DEFER)
 
     # Check result
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
@@ -1268,8 +1280,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
     # Run one opcode
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.DEFER)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.DEFER)
 
     # Job goes back to queued
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
@@ -1285,8 +1297,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
       self.assertEqual(queue.GetNextUpdate(), (job, True))
 
     # Run second opcode
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.DEFER)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.DEFER)
 
     # Job goes back to queued
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
@@ -1329,8 +1341,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
     # Run one opcode
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.DEFER)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.DEFER)
 
     # Job goes back to queued
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
@@ -1414,8 +1426,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
 
       for _ in range(successcount):
-        self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                         jqueue._JobProcessor.DEFER)
+        self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                         _JobProcessor.DEFER)
 
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
       self.assertEqual(job.GetInfo(["opstatus"]),
@@ -1427,7 +1439,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
       self.assert_(job.ops_iter)
 
       # Serialize and restore (simulates program restart)
-      newjob = jqueue._QueuedJob.Restore(queue, job.Serialize(), True, False)
+      newjob = _QueuedJob.Restore(queue, job.Serialize(), True, False)
       self.assertFalse(newjob.ops_iter)
       self._TestPartial(newjob, successcount)
 
@@ -1439,7 +1451,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     opexec = _FakeExecOpCodeForProc(queue, None, None)
 
     for remaining in reversed(range(len(job.ops) - successcount)):
-      result = jqueue._JobProcessor(queue, opexec, job)()
+      result = _JobProcessor(queue, opexec, job)()
       self.assertEqual(queue.GetNextUpdate(), (job, True))
       self.assertEqual(queue.GetNextUpdate(), (job, True))
       self.assertEqual(queue.GetNextUpdate(), (job, True))
@@ -1447,10 +1459,10 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
       if remaining == 0:
         # Last opcode
-        self.assertEqual(result, jqueue._JobProcessor.FINISHED)
+        self.assertEqual(result, _JobProcessor.FINISHED)
         break
 
-      self.assertEqual(result, jqueue._JobProcessor.DEFER)
+      self.assertEqual(result, _JobProcessor.DEFER)
 
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
 
@@ -1467,15 +1479,15 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self._GenericCheckJob(job)
 
     # Calling the processor on a finished job should be a no-op
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
     # ... also after being restored
-    job2 = jqueue._QueuedJob.Restore(queue, job.Serialize(), True, False)
+    job2 = _QueuedJob.Restore(queue, job.Serialize(), True, False)
     # Calling the processor on a finished job should be a no-op
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job2)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job2)(),
+                     _JobProcessor.FINISHED)
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
   def testProcessorOnRunningJob(self):
@@ -1497,7 +1509,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
     # Calling on running job must fail
     self.assertRaises(errors.ProgrammerError,
-                      jqueue._JobProcessor(queue, opexec, job))
+                      _JobProcessor(queue, opexec, job))
 
   def testLogMessages(self):
     # Tests the "Feedback" callback function
@@ -1550,16 +1562,16 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
     for remaining in reversed(range(len(job.ops))):
       self.assertRaises(IndexError, queue.GetNextUpdate)
-      result = jqueue._JobProcessor(queue, opexec, job)()
+      result = _JobProcessor(queue, opexec, job)()
       self.assertEqual(queue.GetNextUpdate(), (job, True))
       self.assertRaises(IndexError, queue.GetNextUpdate)
 
       if remaining == 0:
         # Last opcode
-        self.assertEqual(result, jqueue._JobProcessor.FINISHED)
+        self.assertEqual(result, _JobProcessor.FINISHED)
         break
 
-      self.assertEqual(result, jqueue._JobProcessor.DEFER)
+      self.assertEqual(result, _JobProcessor.DEFER)
 
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
 
@@ -1574,7 +1586,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self._CheckLogMessages(job, logmsgcount)
 
     # Serialize and restore (simulates program restart)
-    newjob = jqueue._QueuedJob.Restore(queue, job.Serialize(), True, False)
+    newjob = _QueuedJob.Restore(queue, job.Serialize(), True, False)
     self._CheckLogMessages(newjob, logmsgcount)
 
     # Check each message
@@ -1659,14 +1671,14 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
     for idx in range(len(ops)):
       self.assertRaises(IndexError, queue.GetNextUpdate)
-      result = jqueue._JobProcessor(queue, opexec, job)()
+      result = _JobProcessor(queue, opexec, job)()
       self.assertEqual(queue.GetNextUpdate(), (job, True))
       self.assertRaises(IndexError, queue.GetNextUpdate)
       if idx == len(ops) - 1:
         # Last opcode
-        self.assertEqual(result, jqueue._JobProcessor.FINISHED)
+        self.assertEqual(result, _JobProcessor.FINISHED)
       else:
-        self.assertEqual(result, jqueue._JobProcessor.DEFER)
+        self.assertEqual(result, _JobProcessor.DEFER)
 
         self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
         self.assert_(job.start_timestamp)
@@ -1691,8 +1703,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self._GenericCheckJob(job)
 
     # Calling the processor on a finished job should be a no-op
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
   def testJobDependency(self):
@@ -1750,19 +1762,19 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
       if attempt < 2:
         depmgr.AddCheckResult(job, prev_job_id2, None,
-                              (jqueue._JobDependencyManager.WAIT, "wait2"))
+                              (_JobDependencyManager.WAIT, "wait2"))
       elif attempt == 2:
         depmgr.AddCheckResult(job, prev_job_id2, None,
-                              (jqueue._JobDependencyManager.CONTINUE, "cont"))
+                              (_JobDependencyManager.CONTINUE, "cont"))
         # The processor will ask for the next dependency immediately
         depmgr.AddCheckResult(job, prev_job_id, None,
-                              (jqueue._JobDependencyManager.WAIT, "wait"))
+                              (_JobDependencyManager.WAIT, "wait"))
       elif attempt < 5:
         depmgr.AddCheckResult(job, prev_job_id, None,
-                              (jqueue._JobDependencyManager.WAIT, "wait"))
+                              (_JobDependencyManager.WAIT, "wait"))
       elif attempt == 5:
         depmgr.AddCheckResult(job, prev_job_id, None,
-                              (jqueue._JobDependencyManager.CONTINUE, "cont"))
+                              (_JobDependencyManager.CONTINUE, "cont"))
       if attempt == 2:
         self.assertEqual(depmgr.CountPendingResults(), 2)
       elif attempt > 5:
@@ -1770,7 +1782,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
       else:
         self.assertEqual(depmgr.CountPendingResults(), 1)
 
-      result = jqueue._JobProcessor(queue, opexec, job)()
+      result = _JobProcessor(queue, opexec, job)()
       if attempt == 0 or attempt >= 5:
         # Job should only be updated if there was an actual change
         self.assertEqual(queue.GetNextUpdate(), (job, True))
@@ -1779,7 +1791,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
       if attempt < 5:
         # Simulate waiting for other job
-        self.assertEqual(result, jqueue._JobProcessor.WAITDEP)
+        self.assertEqual(result, _JobProcessor.WAITDEP)
         self.assertTrue(job.cur_opctx)
         self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_WAITING)
         self.assertRaises(IndexError, depmgr.GetNextNotification)
@@ -1787,14 +1799,14 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
         self.assertFalse(job.end_timestamp)
         continue
 
-      if result == jqueue._JobProcessor.FINISHED:
+      if result == _JobProcessor.FINISHED:
         # Last opcode
         self.assertFalse(job.cur_opctx)
         break
 
       self.assertRaises(IndexError, depmgr.GetNextNotification)
 
-      self.assertEqual(result, jqueue._JobProcessor.DEFER)
+      self.assertEqual(result, _JobProcessor.DEFER)
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
       self.assert_(job.start_timestamp)
       self.assertFalse(job.end_timestamp)
@@ -1816,8 +1828,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self.assertFalse(depmgr.CountWaitingJobs())
 
     # Calling the processor on a finished job should be a no-op
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
   def testJobDependencyCancel(self):
@@ -1877,18 +1889,18 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
         pass
       elif attempt < 4:
         depmgr.AddCheckResult(job, prev_job_id, None,
-                              (jqueue._JobDependencyManager.WAIT, "wait"))
+                              (_JobDependencyManager.WAIT, "wait"))
       elif attempt == 4:
         # Other job was cancelled
         depmgr.AddCheckResult(job, prev_job_id, None,
-                              (jqueue._JobDependencyManager.CANCEL, "cancel"))
+                              (_JobDependencyManager.CANCEL, "cancel"))
 
       if attempt == 0:
         self.assertEqual(depmgr.CountPendingResults(), 0)
       else:
         self.assertEqual(depmgr.CountPendingResults(), 1)
 
-      result = jqueue._JobProcessor(queue, opexec, job)()
+      result = _JobProcessor(queue, opexec, job)()
       if attempt <= 1 or attempt >= 4:
         # Job should only be updated if there was an actual change
         self.assertEqual(queue.GetNextUpdate(), (job, True))
@@ -1897,7 +1909,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
       if attempt > 0 and attempt < 4:
         # Simulate waiting for other job
-        self.assertEqual(result, jqueue._JobProcessor.WAITDEP)
+        self.assertEqual(result, _JobProcessor.WAITDEP)
         self.assertTrue(job.cur_opctx)
         self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_WAITING)
         self.assertRaises(IndexError, depmgr.GetNextNotification)
@@ -1905,14 +1917,14 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
         self.assertFalse(job.end_timestamp)
         continue
 
-      if result == jqueue._JobProcessor.FINISHED:
+      if result == _JobProcessor.FINISHED:
         # Last opcode
         self.assertFalse(job.cur_opctx)
         break
 
       self.assertRaises(IndexError, depmgr.GetNextNotification)
 
-      self.assertEqual(result, jqueue._JobProcessor.DEFER)
+      self.assertEqual(result, _JobProcessor.DEFER)
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
       self.assert_(job.start_timestamp)
       self.assertFalse(job.end_timestamp)
@@ -1933,8 +1945,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self.assertFalse(depmgr.CountPendingResults())
 
     # Calling the processor on a finished job should be a no-op
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
   def testJobDependencyWrongstatus(self):
@@ -1994,18 +2006,18 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
         pass
       elif attempt < 4:
         depmgr.AddCheckResult(job, prev_job_id, None,
-                              (jqueue._JobDependencyManager.WAIT, "wait"))
+                              (_JobDependencyManager.WAIT, "wait"))
       elif attempt == 4:
         # Other job failed
         depmgr.AddCheckResult(job, prev_job_id, None,
-                              (jqueue._JobDependencyManager.WRONGSTATUS, "w"))
+                              (_JobDependencyManager.WRONGSTATUS, "w"))
 
       if attempt == 0:
         self.assertEqual(depmgr.CountPendingResults(), 0)
       else:
         self.assertEqual(depmgr.CountPendingResults(), 1)
 
-      result = jqueue._JobProcessor(queue, opexec, job)()
+      result = _JobProcessor(queue, opexec, job)()
       if attempt <= 1 or attempt >= 4:
         # Job should only be updated if there was an actual change
         self.assertEqual(queue.GetNextUpdate(), (job, True))
@@ -2014,7 +2026,7 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
 
       if attempt > 0 and attempt < 4:
         # Simulate waiting for other job
-        self.assertEqual(result, jqueue._JobProcessor.WAITDEP)
+        self.assertEqual(result, _JobProcessor.WAITDEP)
         self.assertTrue(job.cur_opctx)
         self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_WAITING)
         self.assertRaises(IndexError, depmgr.GetNextNotification)
@@ -2022,14 +2034,14 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
         self.assertFalse(job.end_timestamp)
         continue
 
-      if result == jqueue._JobProcessor.FINISHED:
+      if result == _JobProcessor.FINISHED:
         # Last opcode
         self.assertFalse(job.cur_opctx)
         break
 
       self.assertRaises(IndexError, depmgr.GetNextNotification)
 
-      self.assertEqual(result, jqueue._JobProcessor.DEFER)
+      self.assertEqual(result, _JobProcessor.DEFER)
       self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
       self.assert_(job.start_timestamp)
       self.assertFalse(job.end_timestamp)
@@ -2054,8 +2066,8 @@ class TestJobProcessor(unittest.TestCase, _JobProcessorTestUtils):
     self.assertFalse(depmgr.CountPendingResults())
 
     # Calling the processor on a finished job should be a no-op
-    self.assertEqual(jqueue._JobProcessor(queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
     self.assertRaises(IndexError, queue.GetNextUpdate)
 
 
@@ -2063,8 +2075,7 @@ class TestEvaluateJobProcessorResult(unittest.TestCase):
   def testFinished(self):
     depmgr = _FakeDependencyManager()
     job = _IdOnlyFakeJob(30953)
-    jqueue._EvaluateJobProcessorResult(depmgr, job,
-                                       jqueue._JobProcessor.FINISHED)
+    _EvaluateJobProcessorResult(depmgr, job, _JobProcessor.FINISHED)
     self.assertEqual(depmgr.GetNextNotification(), job.id)
     self.assertRaises(IndexError, depmgr.GetNextNotification)
 
@@ -2072,8 +2083,7 @@ class TestEvaluateJobProcessorResult(unittest.TestCase):
     depmgr = _FakeDependencyManager()
     job = _IdOnlyFakeJob(11326, priority=5463)
     try:
-      jqueue._EvaluateJobProcessorResult(depmgr, job,
-                                         jqueue._JobProcessor.DEFER)
+      _EvaluateJobProcessorResult(depmgr, job, _JobProcessor.DEFER)
     except workerpool.DeferTask, err:
       self.assertEqual(err.priority, 5463)
     else:
@@ -2083,15 +2093,13 @@ class TestEvaluateJobProcessorResult(unittest.TestCase):
   def testWaitdep(self):
     depmgr = _FakeDependencyManager()
     job = _IdOnlyFakeJob(21317)
-    jqueue._EvaluateJobProcessorResult(depmgr, job,
-                                       jqueue._JobProcessor.WAITDEP)
+    _EvaluateJobProcessorResult(depmgr, job, _JobProcessor.WAITDEP)
     self.assertRaises(IndexError, depmgr.GetNextNotification)
 
   def testOther(self):
     depmgr = _FakeDependencyManager()
     job = _IdOnlyFakeJob(5813)
-    self.assertRaises(errors.ProgrammerError,
-                      jqueue._EvaluateJobProcessorResult,
+    self.assertRaises(errors.ProgrammerError, _EvaluateJobProcessorResult,
                       depmgr, job, "Other result")
     self.assertRaises(IndexError, depmgr.GetNextNotification)
 
@@ -2256,7 +2264,7 @@ class TestJobProcessorTimeouts(unittest.TestCase, _JobProcessorTestUtils):
     self.assertFalse(self.done_lock_before_blocking)
 
     while True:
-      proc = jqueue._JobProcessor(self.queue, opexec, job,
+      proc = _JobProcessor(self.queue, opexec, job,
                                   _timeout_strategy_factory=tsf)
 
       self.assertRaises(IndexError, self.queue.GetNextUpdate)
@@ -2273,7 +2281,7 @@ class TestJobProcessorTimeouts(unittest.TestCase, _JobProcessorTestUtils):
       self.assertFalse(compat.any(hasattr(op.input, "priority")
                                   for op in job.ops))
 
-      if result == jqueue._JobProcessor.FINISHED or self.gave_lock:
+      if result == _JobProcessor.FINISHED or self.gave_lock:
         # Got lock and/or job is done, result must've been written
         self.assertFalse(job.cur_opctx)
         self.assertEqual(self.queue.GetNextUpdate(), (job, True))
@@ -2281,11 +2289,11 @@ class TestJobProcessorTimeouts(unittest.TestCase, _JobProcessorTestUtils):
         self.assertEqual(self.lock_acq_prio, job.ops[self.curop].priority)
         self.assert_(job.ops[self.curop].exec_timestamp)
 
-      if result == jqueue._JobProcessor.FINISHED:
+      if result == _JobProcessor.FINISHED:
         self.assertFalse(job.cur_opctx)
         break
 
-      self.assertEqual(result, jqueue._JobProcessor.DEFER)
+      self.assertEqual(result, _JobProcessor.DEFER)
 
       if self.curop == 0:
         self.assertEqual(job.ops[self.curop].start_timestamp,
@@ -2328,8 +2336,8 @@ class TestJobProcessorTimeouts(unittest.TestCase, _JobProcessorTestUtils):
                             for op in job.ops))
 
     # Calling the processor on a finished job should be a no-op
-    self.assertEqual(jqueue._JobProcessor(self.queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(self.queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
     self.assertRaises(IndexError, self.queue.GetNextUpdate)
 
 
@@ -2357,8 +2365,8 @@ class TestJobProcessorChangePriority(unittest.TestCase, _JobProcessorTestUtils):
     opexec = _FakeExecOpCodeForProc(self.queue, self._BeforeStart, None)
 
     # Run first opcode
-    self.assertEqual(jqueue._JobProcessor(self.queue, opexec, job)(),
-                     jqueue._JobProcessor.DEFER)
+    self.assertEqual(_JobProcessor(self.queue, opexec, job)(),
+                     _JobProcessor.DEFER)
 
     # Job goes back to queued
     self.assertEqual(job.CalcStatus(), constants.JOB_STATUS_QUEUED)
@@ -2380,8 +2388,8 @@ class TestJobProcessorChangePriority(unittest.TestCase, _JobProcessorTestUtils):
     self.assertEqual(job.CalcPriority(), -10)
 
     # Process second opcode
-    self.assertEqual(jqueue._JobProcessor(self.queue, opexec, job)(),
-                     jqueue._JobProcessor.DEFER)
+    self.assertEqual(_JobProcessor(self.queue, opexec, job)(),
+                     _JobProcessor.DEFER)
 
     self.assertEqual(self.opexecprio.pop(0), -10)
     self.assertRaises(IndexError, self.opexecprio.pop, 0)
@@ -2405,8 +2413,8 @@ class TestJobProcessorChangePriority(unittest.TestCase, _JobProcessorTestUtils):
     self.assertEqual(job.CalcPriority(), 5)
 
     # Process third opcode
-    self.assertEqual(jqueue._JobProcessor(self.queue, opexec, job)(),
-                     jqueue._JobProcessor.FINISHED)
+    self.assertEqual(_JobProcessor(self.queue, opexec, job)(),
+                     _JobProcessor.FINISHED)
 
     self.assertEqual(self.opexecprio.pop(0), 5)
     self.assertRaises(IndexError, self.opexecprio.pop, 0)
@@ -2438,7 +2446,7 @@ class TestJobDependencyManager(unittest.TestCase):
   def setUp(self):
     self._status = []
     self._queue = []
-    self.jdm = jqueue._JobDependencyManager(self._GetStatus, self._Enqueue)
+    self.jdm = _JobDependencyManager(self._GetStatus, self._Enqueue)
 
   def _GetStatus(self, job_id):
     (exp_job_id, result) = self._status.pop(0)
@@ -2742,7 +2750,7 @@ class TestJobDependencyManager(unittest.TestCase):
     def _FakeStatus(_):
       raise errors.JobLost("#msg#")
 
-    jdm = jqueue._JobDependencyManager(_FakeStatus, None)
+    jdm = _JobDependencyManager(_FakeStatus, None)
     (result, _) = jdm.CheckAndRegister(job, job_id, [])
     self.assertEqual(result, self.jdm.ERROR)
     self.assertFalse(jdm.JobWaiting(job))

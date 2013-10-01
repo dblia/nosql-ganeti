@@ -41,6 +41,7 @@ SHELL_ENV_INIT = autotools/shell-env-init
 # the directory + 'dir' suffix
 clientdir = $(pkgpythondir)/client
 configdir = $(pkgpythondir)/config
+jqueuedir = $(pkgpythondir)/jqueue
 hypervisordir = $(pkgpythondir)/hypervisor
 httpdir = $(pkgpythondir)/http
 masterddir = $(pkgpythondir)/masterd
@@ -100,6 +101,7 @@ DIRS = \
 	lib/build \
 	lib/client \
 	lib/config \
+	lib/jqueue \
 	lib/confd \
 	lib/http \
 	lib/hypervisor \
@@ -256,7 +258,6 @@ pkgpython_PYTHON = \
 	lib/errors.py \
 	lib/hooksmaster.py \
 	lib/ht.py \
-	lib/jqueue.py \
 	lib/jstore.py \
 	lib/locking.py \
 	lib/luxi.py \
@@ -298,6 +299,11 @@ config_PYTHON = \
 	lib/config/__init__.py \
 	lib/config/base.py \
 	lib/config/default.py
+
+jqueue_PYTHON = \
+	lib/jqueue/__init__.py \
+	lib/jqueue/base.py \
+	lib/jqueue/default.py
 
 hypervisor_PYTHON = \
 	lib/hypervisor/__init__.py \
@@ -1201,6 +1207,7 @@ all_python_code = \
 	$(pkgpython_PYTHON) \
 	$(client_PYTHON) \
 	$(config_PYTHON) \
+	$(jqueue_PYTHON) \
 	$(hypervisor_PYTHON) \
 	$(rapi_PYTHON) \
 	$(server_PYTHON) \

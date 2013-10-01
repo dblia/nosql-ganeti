@@ -146,11 +146,11 @@ case_JobStatusPri_py_equiv = do
                  assertFailure $ "Job has non-ASCII fields: " ++ show job
         ) jobs
   py_stdout <-
-     runPython "from ganeti import jqueue\n\
+     runPython "import ganeti.jqueue as jqueue\n\
                \from ganeti import serializer\n\
                \import sys\n\
                \job_data = serializer.Load(sys.stdin.read())\n\
-               \decoded = [jqueue._QueuedJob.Restore(None, o, False, False)\n\
+               \decoded = [jqueue.base._QueuedJob.Restore(None, o, False, False)\n\
                \           for o in job_data]\n\
                \encoded = [(job.CalcStatus(), job.CalcPriority())\n\
                \           for job in decoded]\n\
