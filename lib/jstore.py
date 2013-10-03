@@ -19,7 +19,9 @@
 # 02110-1301, USA.
 
 
-"""Module implementing the job queue handling."""
+"""Abstraction module implementing the job queue handling.
+
+"""
 
 import errno
 import os
@@ -33,155 +35,216 @@ from ganeti import pathutils
 
 JOBS_PER_ARCHIVE_DIRECTORY = 10000
 
-
-def _ReadNumericFile(file_name):
-  """Reads a file containing a number.
-
-  @rtype: None or int
-  @return: None if file is not found, otherwise number
+class _Base:
+  """Base class for job queue handling abstraction
 
   """
-  try:
-    contents = utils.ReadFile(file_name)
-  except EnvironmentError, err:
-    if err.errno in (errno.ENOENT, ):
-      return None
-    raise
+  def _ReadNumericFile(self, doc_name):
+    """Reads a file containing a number.
 
-  try:
-    return int(contents)
-  except (ValueError, TypeError), err:
-    # Couldn't convert to int
-    raise errors.JobQueueError("Content of file '%s' is not numeric: %s" %
-                               (file_name, err))
+    @rtype: None or int
+    @return: None if file is not found, otherwise number
+
+    """
+    raise NotImplementedError()
+
+  def ReadSerial(self):
+    """Read the serial file.
+
+    The queue should be locked while this function is called.
+
+    """
+    raise NotImplementedError()
+
+  def ReadVersion(self):
+    """Read the queue version.
+
+    The queue should be locked while this function is called.
+
+    """
+    raise NotImplementedError()
+
+  def InitAndVerifyQueue(self, must_lock):
+    """Open and lock job queue.
+
+    If necessary, the queue is automatically initialized.
+
+    @type must_lock: bool
+    @param must_lock: Whether an exclusive lock must be held.
+    @rtype: utils.FileLock
+    @return: Lock object for the queue. This can be used to change the
+             locking mode.
+
+    """
+    raise NotImplementedError()
+
+  def CheckDrainFlag(self):
+    """Check if the queue is marked to be drained.
+
+    This currently uses the queue drain file, which makes it a per-node flag.
+    In the future this can be moved to the config file.
+
+    @rtype: boolean
+    @return: True if the job queue is marked drained
+
+    """
+    raise NotImplementedError()
+
+  def SetDrainFlag(self, drain_flag, *args):
+    """Sets the drain flag for the queue.
+
+    @type drain_flag: boolean
+    @param drain_flag: Whether to set or unset the drain flag
+    @attention: This function should only called the current holder of the queue
+      lock
+
+    """
+    raise NotImplementedError()
 
 
-def ReadSerial():
-  """Read the serial file.
-
-  The queue should be locked while this function is called.
+class FileStorage(_Base):
+  """Disk queue handling unit.
 
   """
-  return _ReadNumericFile(pathutils.JOB_QUEUE_SERIAL_FILE)
+  def _ReadNumericFile(self, doc_name):
+    """Reads a file containing a number.
+
+    See L{_Base._ReadNumericFile}
+
+    """
+    try:
+      contents = utils.ReadFile(doc_name)
+    except EnvironmentError, err:
+      if err.errno in (errno.ENOENT, ):
+        return None
+      raise
+
+    try:
+      return int(contents)
+    except (ValueError, TypeError), err:
+      # Couldn't convert to int
+      raise errors.JobQueueError("Content of file '%s' is not numeric: %s" %
+                                 (doc_name, err))
 
 
-def ReadVersion():
-  """Read the queue version.
+  def ReadSerial(self):
+    """Read the serial file.
 
-  The queue should be locked while this function is called.
+    The queue should be locked while this function is called.
 
-  """
-  return _ReadNumericFile(pathutils.JOB_QUEUE_VERSION_FILE)
+    """
+    return self._ReadNumericFile(pathutils.JOB_QUEUE_SERIAL_FILE)
 
 
-def InitAndVerifyQueue(must_lock):
-  """Open and lock job queue.
+  def ReadVersion(self):
+    """Read the queue version.
 
-  If necessary, the queue is automatically initialized.
+    The queue should be locked while this function is called.
 
-  @type must_lock: bool
-  @param must_lock: Whether an exclusive lock must be held.
-  @rtype: utils.FileLock
-  @return: Lock object for the queue. This can be used to change the
-           locking mode.
+    """
+    return self._ReadNumericFile(pathutils.JOB_QUEUE_VERSION_FILE)
 
-  """
-  getents = runtime.GetEnts()
 
-  # Lock queue
-  queue_lock = utils.FileLock.Open(pathutils.JOB_QUEUE_LOCK_FILE)
-  try:
-    # The queue needs to be locked in exclusive mode to write to the serial and
-    # version files.
-    if must_lock:
-      queue_lock.Exclusive(blocking=True)
-      holding_lock = True
-    else:
-      try:
-        queue_lock.Exclusive(blocking=False)
+  def InitAndVerifyQueue(self, must_lock):
+    """Open and lock job queue.
+
+    If necessary, the queue is automatically initialized.
+
+    See L{InitAndVerifyQueue}
+
+    """
+    getents = runtime.GetEnts()
+
+    # Lock queue
+    queue_lock = utils.FileLock.Open(pathutils.JOB_QUEUE_LOCK_FILE)
+    try:
+      # The queue needs to be locked in exclusive mode to write to the serial and
+      # version files.
+      if must_lock:
+        queue_lock.Exclusive(blocking=True)
         holding_lock = True
-      except errors.LockError:
-        # Ignore errors and assume the process keeping the lock checked
-        # everything.
-        holding_lock = False
+      else:
+        try:
+          queue_lock.Exclusive(blocking=False)
+          holding_lock = True
+        except errors.LockError:
+          # Ignore errors and assume the process keeping the lock checked
+          # everything.
+          holding_lock = False
 
-    if holding_lock:
-      # Verify version
-      version = ReadVersion()
-      if version is None:
-        # Write new version file
-        utils.WriteFile(pathutils.JOB_QUEUE_VERSION_FILE,
-                        uid=getents.masterd_uid, gid=getents.daemons_gid,
-                        mode=constants.JOB_QUEUE_FILES_PERMS,
-                        data="%s\n" % constants.JOB_QUEUE_VERSION)
+      if holding_lock:
+        # Verify version
+        version = self.ReadVersion()
+        if version is None:
+          # Write new version file
+          utils.WriteFile(pathutils.JOB_QUEUE_VERSION_FILE,
+                          uid=getents.masterd_uid, gid=getents.daemons_gid,
+                          mode=constants.JOB_QUEUE_FILES_PERMS,
+                          data="%s\n" % constants.JOB_QUEUE_VERSION)
 
-        # Read again
-        version = ReadVersion()
+          # Read again
+          version = self.ReadVersion()
 
-      if version != constants.JOB_QUEUE_VERSION:
-        raise errors.JobQueueError("Found job queue version %s, expected %s",
-                                   version, constants.JOB_QUEUE_VERSION)
+        if version != constants.JOB_QUEUE_VERSION:
+          raise errors.JobQueueError("Found job queue version %s, expected %s",
+                                     version, constants.JOB_QUEUE_VERSION)
 
-      serial = ReadSerial()
-      if serial is None:
-        # Write new serial file
-        utils.WriteFile(pathutils.JOB_QUEUE_SERIAL_FILE,
-                        uid=getents.masterd_uid, gid=getents.daemons_gid,
-                        mode=constants.JOB_QUEUE_FILES_PERMS,
-                        data="%s\n" % 0)
+        serial = self.ReadSerial()
+        if serial is None:
+          # Write new serial file
+          utils.WriteFile(pathutils.JOB_QUEUE_SERIAL_FILE,
+                          uid=getents.masterd_uid, gid=getents.daemons_gid,
+                          mode=constants.JOB_QUEUE_FILES_PERMS,
+                          data="%s\n" % 0)
 
-        # Read again
-        serial = ReadSerial()
+          # Read again
+          serial = self.ReadSerial()
 
-      if serial is None:
-        # There must be a serious problem
-        raise errors.JobQueueError("Can't read/parse the job queue"
-                                   " serial file")
+        if serial is None:
+          # There must be a serious problem
+          raise errors.JobQueueError("Can't read/parse the job queue"
+                                     " serial file")
 
-      if not must_lock:
-        # There's no need for more error handling. Closing the lock
-        # file below in case of an error will unlock it anyway.
-        queue_lock.Unlock()
+        if not must_lock:
+          # There's no need for more error handling. Closing the lock
+          # file below in case of an error will unlock it anyway.
+          queue_lock.Unlock()
 
-  except:
-    queue_lock.Close()
-    raise
+    except:
+      queue_lock.Close()
+      raise
 
-  return queue_lock
-
-
-def CheckDrainFlag():
-  """Check if the queue is marked to be drained.
-
-  This currently uses the queue drain file, which makes it a per-node flag.
-  In the future this can be moved to the config file.
-
-  @rtype: boolean
-  @return: True if the job queue is marked drained
-
-  """
-  return os.path.exists(pathutils.JOB_QUEUE_DRAIN_FILE)
+    return queue_lock
 
 
-def SetDrainFlag(drain_flag):
-  """Sets the drain flag for the queue.
+  def CheckDrainFlag(self):
+    """Check if the queue is marked to be drained.
 
-  @type drain_flag: boolean
-  @param drain_flag: Whether to set or unset the drain flag
-  @attention: This function should only called the current holder of the queue
-    lock
+    This currently uses the queue drain file, which makes it a per-node flag.
+    In the future this can be moved to the config file.
 
-  """
-  getents = runtime.GetEnts()
+    See L{_Base.CheckDrainFlag}
 
-  if drain_flag:
-    utils.WriteFile(pathutils.JOB_QUEUE_DRAIN_FILE, data="",
-                    uid=getents.masterd_uid, gid=getents.daemons_gid,
-                    mode=constants.JOB_QUEUE_FILES_PERMS)
-  else:
-    utils.RemoveFile(pathutils.JOB_QUEUE_DRAIN_FILE)
+    """
+    return os.path.exists(pathutils.JOB_QUEUE_DRAIN_FILE)
 
-  assert (not drain_flag) ^ CheckDrainFlag()
+
+  def SetDrainFlag(self, drain_flag):
+    """Sets the drain flag for the queue.
+
+    See L{_Base.SetDrainFlag}
+
+    """
+    getents = runtime.GetEnts()
+
+    if drain_flag:
+      utils.WriteFile(pathutils.JOB_QUEUE_DRAIN_FILE, data="",
+                      uid=getents.masterd_uid, gid=getents.daemons_gid,
+                      mode=constants.JOB_QUEUE_FILES_PERMS)
+    else:
+      utils.RemoveFile(pathutils.JOB_QUEUE_DRAIN_FILE)
+
+    assert (not drain_flag) ^ self.CheckDrainFlag()
 
 
 def FormatJobID(job_id):
@@ -205,12 +268,12 @@ def FormatJobID(job_id):
 
 
 def GetArchiveDirectory(job_id):
-  """Returns the archive directory for a job.
+  """Returns the archive index for a job.
 
   @type job_id: str
   @param job_id: Job identifier
   @rtype: str
-  @return: Directory name
+  @return: Direcotry name
 
   """
   return str(ParseJobId(job_id) / JOBS_PER_ARCHIVE_DIRECTORY)
@@ -224,3 +287,28 @@ def ParseJobId(job_id):
     return int(job_id)
   except (ValueError, TypeError):
     raise errors.ParameterError("Invalid job ID '%s'" % job_id)
+
+
+def GetJStoreClass(name):
+  """Returns the class for a job queue storage type
+
+  @type name: string
+  @param name: Job queue storage type
+
+  """
+  try:
+    assert name == "disk"
+    return FileStorage
+  except KeyError:
+    msg = "Unknown jstore type: %r" % name
+    raise errors.JobQueueError(msg)
+
+
+def GetJStore(name, **kargs):
+  """Factory function for jstore methods.
+
+  @type name: string
+  @param name: Job queue storage type
+
+  """
+  return GetJStoreClass(name)(**kargs)

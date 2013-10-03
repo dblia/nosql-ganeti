@@ -70,7 +70,8 @@ def _PrepareQueueLock():
 
   # Prepare job queue
   try:
-    queue_lock = jstore.InitAndVerifyQueue(must_lock=False)
+    jstore_cl = jstore.GetJStore("disk")
+    queue_lock = jstore_cl.InitAndVerifyQueue(must_lock=False)
     return None
   except EnvironmentError, err:
     return err
@@ -985,7 +986,8 @@ class NodeRequestHandler(http.server.HttpServerHandler):
     """
     (flag, ) = params
 
-    return jstore.SetDrainFlag(flag)
+    jstore_cl = jstore.GetJStore("disk")
+    return jstore_cl.SetDrainFlag(flag)
 
   # hypervisor ---------------
 

@@ -848,9 +848,10 @@ def MasterFailover(no_voting=False):
                     " continuing but activating the master on the current"
                     " node will probably fail", total_timeout)
 
-  if jstore.CheckDrainFlag():
+  jstore_cl = jstore.GetJStore("disk")
+  if jstore_cl.CheckDrainFlag():
     logging.info("Undraining job queue")
-    jstore.SetDrainFlag(False)
+    jstore_cl.SetDrainFlag(False)
 
   logging.info("Starting the master daemons on the new master")
 

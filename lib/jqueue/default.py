@@ -239,10 +239,11 @@ class DiskJobQueue(base.BaseJobQueue):
     super(DiskJobQueue, self).__init__(context)
     # Initialize the queue, and acquire the filelock.
     # This ensures no other process is working on the job queue.
-    self._queue_filelock = jstore.InitAndVerifyQueue(must_lock=True)
+    jstore_cl = jstore.GetJStore("disk")
+    self._queue_filelock = jstore_cl.InitAndVerifyQueue(must_lock=True)
 
     # Read serial file
-    self._last_serial = jstore.ReadSerial()
+    self._last_serial = jstore_cl.ReadSerial()
     assert self._last_serial is not None, ("Serial file was modified between"
                                            " check in jstore and here")
 
@@ -259,7 +260,7 @@ class DiskJobQueue(base.BaseJobQueue):
     self._queue_size = None
     self._UpdateQueueSizeUnlocked()
     assert ht.TInt(self._queue_size)
-    self._drained = jstore.CheckDrainFlag()
+    self._drained = jstore_cl.CheckDrainFlag()
 
     # Job dependencies
     self.depmgr = _JobDependencyManager(self._GetJobStatusForDependencies,
@@ -665,7 +666,7 @@ class DiskJobQueue(base.BaseJobQueue):
 
     """
     # Change flag locally
-    jstore.SetDrainFlag(drain_flag)
+    jstore.GetJStore("disk").SetDrainFlag(drain_flag)
 
     self._drained = drain_flag
 

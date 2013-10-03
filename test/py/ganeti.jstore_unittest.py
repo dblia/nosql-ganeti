@@ -80,7 +80,8 @@ class TestParseJobId(testutils.GanetiTestCase):
 
 class TestReadNumericFile(testutils.GanetiTestCase):
   def testNonExistingFile(self):
-    result = jstore._ReadNumericFile("/tmp/this/file/does/not/exist")
+    jstore_cl = jstore.GetJStore("disk")
+    result = jstore_cl._ReadNumericFile("/tmp/this/file/does/not/exist")
     self.assertTrue(result is None)
 
   def testValidFile(self):
@@ -88,13 +89,15 @@ class TestReadNumericFile(testutils.GanetiTestCase):
 
     for (data, exp) in [("123", 123), ("0\n", 0)]:
       utils.WriteFile(tmpfile, data=data)
-      result = jstore._ReadNumericFile(tmpfile)
+      jstore_cl = jstore.GetJStore("disk")
+      result = jstore_cl._ReadNumericFile(tmpfile)
       self.assertEqual(result, exp)
 
   def testInvalidContent(self):
     tmpfile = self._CreateTempFile()
     utils.WriteFile(tmpfile, data="{wrong content")
-    self.assertRaises(errors.JobQueueError, jstore._ReadNumericFile, tmpfile)
+    jstore_cl = jstore.GetJStore("disk")
+    self.assertRaises(errors.JobQueueError, jstore_cl._ReadNumericFile, tmpfile)
 
 
 if __name__ == "__main__":
