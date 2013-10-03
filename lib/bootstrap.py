@@ -341,6 +341,7 @@ def _InitFileStorage(file_storage_dir):
 
 
 def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
+                backend_storage,
                 master_netmask, master_netdev, file_storage_dir,
                 shared_file_storage_dir, candidate_pool_size, secondary_ip=None,
                 vg_name=None, beparams=None, nicparams=None, ndparams=None,
@@ -351,13 +352,16 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
                 prealloc_wipe_disks=False, use_external_mip_script=False,
                 hv_state=None, disk_state=None):
   """Initialise the cluster.
-
+  
   @type candidate_pool_size: int
   @param candidate_pool_size: master candidate pool size
+  @type backend_storage: string
+  @param backend_storage: ganeti backend storage type for job queue and
+                          configuration data
 
   """
   # TODO: complete the docstring
-  if config.GetConfigWriterClass("disk").IsCluster():
+  if config.GetConfigWriterClass(backend_storage).IsCluster():
     raise errors.OpPrereqError("Cluster is already initialised",
                                errors.ECODE_STATE)
 
@@ -569,6 +573,7 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
 
   # init of cluster config file
   cluster_config = objects.Cluster(
+    backend_storage=backend_storage,
     serial_no=1,
     rsahostkeypub=sshkey,
     highest_used_port=(constants.FIRST_DRBD_PORT - 1),
@@ -613,7 +618,7 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
                                     ctime=now, mtime=now,
                                     )
   InitConfig(constants.CONFIG_VERSION, cluster_config, master_node_config)
-  cfg = config.GetConfigWriter("disk", offline=True)
+  cfg = config.GetConfigWriter(backend_storage, offline=True)
   ssh.WriteKnownHostsFile(cfg, pathutils.SSH_KNOWN_HOSTS_FILE)
   cfg.Update(cfg.GetClusterInfo(), logging.error)
   ssconf.WriteSsconfFiles(cfg.GetSsconfValues())
@@ -646,6 +651,9 @@ def InitConfig(version, cluster_config, master_node_config,
   @param master_node_config: master node configuration
   @type cfg_file: string
   @param cfg_file: configuration file path
+  @type backend_storage: string
+  @param backend_storage: ganeti backend storage type for jqueue and
+                          configuration data
 
   """
   uuid_generator = config.base.TemporaryReservationManager()
@@ -686,7 +694,8 @@ def FinalizeClusterDestroy(master):
   begun in cmdlib.LUDestroyOpcode.
 
   """
-  cfg = config.GetConfigWriter("disk")
+  backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+  cfg = config.GetConfigWriter(backend_storage)
   modify_ssh_setup = cfg.GetClusterInfo().modify_ssh_setup
   runner = rpc.BootstrapRunner()
 
@@ -751,6 +760,7 @@ def MasterFailover(no_voting=False):
 
   """
   sstore = ssconf.SimpleStore()
+  backend_storage = sstore.GetBackendStorageType()
 
   old_master, new_master = ssconf.GetMasterAndMyself(sstore)
   node_list = sstore.GetNodeList()
@@ -795,7 +805,7 @@ def MasterFailover(no_voting=False):
   try:
     # instantiate a real config writer, as we now know we have the
     # configuration data
-    cfg = config.GetConfigWriter("disk", accept_foreign=True)
+    cfg = config.GetConfigWriter(backend_storage, accept_foreign=True)
 
     cluster_info = cfg.GetClusterInfo()
     cluster_info.master_node = new_master
@@ -848,7 +858,7 @@ def MasterFailover(no_voting=False):
                     " continuing but activating the master on the current"
                     " node will probably fail", total_timeout)
 
-  jstore_cl = jstore.GetJStore("disk")
+  jstore_cl = jstore.GetJStore(backend_storage)
   if jstore_cl.CheckDrainFlag():
     logging.info("Undraining job queue")
     jstore_cl.SetDrainFlag(False)

@@ -480,8 +480,11 @@ class GanetiContext(object):
     """
     assert self.__class__._instance is None, "double GanetiContext instance"
 
+    # Create the ganeti global backend storage type
+    self.backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+
     # Create global configuration object
-    self.cfg = config.GetConfigWriter("disk")
+    self.cfg = config.GetConfigWriter(self.backend_storage)
 
     # Locking manager
     self.glm = locking.GanetiLockManager(
@@ -496,7 +499,7 @@ class GanetiContext(object):
     self.rpc = rpc.RpcRunner(self.cfg, self.glm.AddToLockMonitor)
 
     # Job queue
-    self.jobqueue = jqueue.GetJobQueue("disk", context=self)
+    self.jobqueue = jqueue.GetJobQueue(self.backend_storage, context=self)
 
     # setting this also locks the class against attribute modifications
     self.__class__._instance = self
@@ -601,8 +604,9 @@ def CheckAgreement():
 
   """
   myself = netutils.Hostname.GetSysName()
+  backend_storage = ssconf.SimpleStore().GetBackendStorageType()
   #temp instantiation of a config writer, used only to get the node list
-  cfg = config.GetConfigWriter("disk")
+  cfg = config.GetConfigWriter(backend_storage)
   node_list = cfg.GetNodeList()
   del cfg
   retries = 6
@@ -643,7 +647,8 @@ def CheckAgreement():
 @rpc.RunWithRPC
 def ActivateMasterIP():
   # activate ip
-  cfg = config.GetConfigWriter("disk")
+  backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+  cfg = config.GetConfigWriter(backend_storage)
   master_params = cfg.GetMasterNetworkParameters()
   ems = cfg.GetUseExternalMipScript()
   runner = rpc.BootstrapRunner()
@@ -678,7 +683,8 @@ def CheckMasterd(options, args):
 
   # Check the configuration is sane before anything else
   try:
-    config.GetConfigWriter("disk")
+    backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+    config.GetConfigWriter(backend_storage)
   except errors.ConfigVersionMismatch, err:
     v1 = "%s.%s.%s" % constants.SplitVersion(err.args[0])
     v2 = "%s.%s.%s" % constants.SplitVersion(err.args[1])

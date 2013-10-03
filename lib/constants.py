@@ -166,6 +166,19 @@ DEFAULT_RAPI_PORT = DAEMONS_PORTS[RAPI][1]
 FIRST_DRBD_PORT = 11000
 LAST_DRBD_PORT = 14999
 
+# Available job queue storage types
+JQ_DISK = "disk"
+
+# Available configuration storage types
+CFG_DISK = "disk"
+
+# Available ganeti backend storage types
+DISK_BACKEND = "disk"
+
+VALID_BACKEND_STORAGE_TYPES = compat.UniqueFrozenset([
+  DISK_BACKEND
+  ])
+
 DAEMONS_LOGBASE = {
   NODED: "node-daemon",
   CONFD: "conf-daemon",
@@ -1876,6 +1889,7 @@ MAX_DISKS = 16
 # SSCONF file prefix
 SSCONF_FILEPREFIX = "ssconf_"
 # SSCONF keys
+SS_BACKEND_STORAGE = "backend_storage"
 SS_CLUSTER_NAME = "cluster_name"
 SS_CLUSTER_TAGS = "cluster_tags"
 SS_FILE_STORAGE_DIR = "file_storage_dir"

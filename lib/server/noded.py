@@ -68,9 +68,12 @@ def _PrepareQueueLock():
   if queue_lock is not None:
     return None
 
+  # Get ganeti backend storage type
+  backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+
   # Prepare job queue
   try:
-    jstore_cl = jstore.GetJStore("disk")
+    jstore_cl = jstore.GetJStore(backend_storage)
     queue_lock = jstore_cl.InitAndVerifyQueue(must_lock=False)
     return None
   except EnvironmentError, err:
@@ -986,7 +989,11 @@ class NodeRequestHandler(http.server.HttpServerHandler):
     """
     (flag, ) = params
 
-    jstore_cl = jstore.GetJStore("disk")
+    # Get ganeti backend storage type
+    backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+
+    jstore_cl = jstore.GetJStore(backend_storage)
+
     return jstore_cl.SetDrainFlag(flag)
 
   # hypervisor ---------------

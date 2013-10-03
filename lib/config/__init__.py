@@ -33,6 +33,10 @@ from ganeti import errors
 from ganeti import constants
 from ganeti.config import default
 
+# Lookup table for configuration storage types
+_CONFIG_DATA_TYPES = {
+  constants.CFG_DISK: default.DiskConfigWriter
+  }
 
 def GetConfigWriterClass(name):
   """Returns the class for a configuration data storage type
@@ -42,8 +46,7 @@ def GetConfigWriterClass(name):
 
   """
   try:
-    assert name == "disk"
-    return default.DiskConfigWriter
+    return _CONFIG_DATA_TYPES[name]
   except KeyError:
     msg = "Unknown configuration storage type: %r" % name
     raise errors.ConfigurationError(msg)

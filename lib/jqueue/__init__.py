@@ -27,6 +27,11 @@ from ganeti import errors
 from ganeti import constants
 from ganeti.jqueue import default
 
+# Lookup table for configuration storage types
+_JOB_QUEUE_TYPES = {
+  constants.JQ_DISK: default.DiskJobQueue
+  }
+
 def GetJobQueueClass(name):
   """Returns the class for a job queue storage type
 
@@ -35,8 +40,7 @@ def GetJobQueueClass(name):
 
   """
   try:
-    assert name == "disk"
-    return default.DiskJobQueue
+    return _JOB_QUEUE_TYPES[name]
   except KeyError:
     msg = "Unknown job queue storage type: %r" % name
     raise errors.JobQueueError(msg)

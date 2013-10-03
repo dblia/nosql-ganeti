@@ -194,7 +194,14 @@ def InitCluster(opts, args):
 
   hv_state = dict(opts.hv_state)
 
+  if opts.backend_storage not in constants.VALID_BACKEND_STORAGE_TYPES:
+    avail = " ".join(constants.VALID_BACKEND_STORAGE_TYPES)
+    ToStderr("Unknown backend storage type: %s." % opts.backend_storage)
+    ToStderr("Please specify one of the following available types: %s" % avail)
+    return 1
+
   bootstrap.InitCluster(cluster_name=args[0],
+                        backend_storage=opts.backend_storage,
                         secondary_ip=opts.secondary_ip,
                         vg_name=vg_name,
                         mac_prefix=opts.mac_prefix,
@@ -1479,10 +1486,10 @@ def Epo(opts, args, cl=None, _on_fn=_EpoOn, _off_fn=_EpoOff,
 commands = {
   "init": (
     InitCluster, [ArgHost(min=1, max=1)],
-    [BACKEND_OPT, CP_SIZE_OPT, ENABLED_HV_OPT, GLOBAL_FILEDIR_OPT,
-     HVLIST_OPT, MAC_PREFIX_OPT, MASTER_NETDEV_OPT, MASTER_NETMASK_OPT,
-     NIC_PARAMS_OPT, NOLVM_STORAGE_OPT, NOMODIFY_ETCHOSTS_OPT,
-     NOMODIFY_SSH_SETUP_OPT, SECONDARY_IP_OPT, VG_NAME_OPT,
+    [BACKEND_OPT, BACKEND_STORAGE, CP_SIZE_OPT, ENABLED_HV_OPT,
+     GLOBAL_FILEDIR_OPT, HVLIST_OPT, MAC_PREFIX_OPT, MASTER_NETDEV_OPT,
+     MASTER_NETMASK_OPT, NIC_PARAMS_OPT, NOLVM_STORAGE_OPT, VG_NAME_OPT,
+     NOMODIFY_ETCHOSTS_OPT, NOMODIFY_SSH_SETUP_OPT, SECONDARY_IP_OPT,
      MAINTAIN_NODE_HEALTH_OPT, UIDPOOL_OPT, DRBD_HELPER_OPT, NODRBD_STORAGE_OPT,
      DEFAULT_IALLOCATOR_OPT, PRIMARY_IP_VERSION_OPT, PREALLOC_WIPE_DISKS_OPT,
      NODE_PARAMS_OPT, GLOBAL_SHARED_FILEDIR_OPT, USE_EXTERNAL_MIP_SCRIPT,

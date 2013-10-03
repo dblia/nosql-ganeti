@@ -42,6 +42,7 @@ SSCONF_LOCK_TIMEOUT = 10
 
 #: Valid ssconf keys
 _VALID_KEYS = compat.UniqueFrozenset([
+  constants.SS_BACKEND_STORAGE,
   constants.SS_CLUSTER_NAME,
   constants.SS_CLUSTER_TAGS,
   constants.SS_FILE_STORAGE_DIR,
@@ -195,6 +196,12 @@ class SimpleStore(object):
 
     """
     return [self.KeyToFilename(key) for key in _VALID_KEYS]
+
+  def GetBackendStorageType(self):
+    """Get the ganeti backend storage type.
+
+    """
+    return self._ReadFile(constants.SS_BACKEND_STORAGE)
 
   def GetClusterName(self):
     """Get the cluster name.

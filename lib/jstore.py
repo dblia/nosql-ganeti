@@ -158,8 +158,8 @@ class FileStorage(_Base):
     # Lock queue
     queue_lock = utils.FileLock.Open(pathutils.JOB_QUEUE_LOCK_FILE)
     try:
-      # The queue needs to be locked in exclusive mode to write to the serial and
-      # version files.
+      # The queue needs to be locked in exclusive mode to write to the serial 
+      # and version files.
       if must_lock:
         queue_lock.Exclusive(blocking=True)
         holding_lock = True
@@ -289,6 +289,11 @@ def ParseJobId(job_id):
     raise errors.ParameterError("Invalid job ID '%s'" % job_id)
 
 
+# Lookup table for configuration storage types
+_JSTORAGE_TYPES = {
+  constants.JQ_DISK: FileStorage
+  }
+
 def GetJStoreClass(name):
   """Returns the class for a job queue storage type
 
@@ -297,8 +302,7 @@ def GetJStoreClass(name):
 
   """
   try:
-    assert name == "disk"
-    return FileStorage
+    return _JSTORAGE_TYPES[name]
   except KeyError:
     msg = "Unknown jstore type: %r" % name
     raise errors.JobQueueError(msg)

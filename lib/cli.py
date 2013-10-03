@@ -62,6 +62,7 @@ __all__ = [
   "AUTO_PROMOTE_OPT",
   "AUTO_REPLACE_OPT",
   "BACKEND_OPT",
+  "BACKEND_STORAGE",
   "BLK_OS_OPT",
   "CAPAB_MASTER_OPT",
   "CAPAB_VM_OPT",
@@ -865,6 +866,11 @@ NORUNTIME_CHGS_OPT = cli_option("--no-runtime-changes",
 BACKEND_OPT = cli_option("-B", "--backend-parameters", dest="beparams",
                          type="keyval", default={},
                          help="Backend parameters")
+
+BACKEND_STORAGE = cli_option("-S", "--backend-storage", dest="backend_storage",
+                             type=str, default="disk",
+                             help="Ganeti backend storage type for job queue"
+                             " and configuration data")
 
 HVOPTS_OPT = cli_option("-H", "--hypervisor-parameters", type="keyval",
                         default={}, dest="hvparams",

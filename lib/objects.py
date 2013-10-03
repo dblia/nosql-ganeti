@@ -1473,6 +1473,7 @@ class NodeGroup(TaggableObject):
 class Cluster(TaggableObject):
   """Config object representing the cluster."""
   __slots__ = [
+    "backend_storage",
     "serial_no",
     "rsahostkeypub",
     "highest_used_port",

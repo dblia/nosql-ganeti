@@ -1806,6 +1806,7 @@ class _BaseConfigWriter(object):
     networks_data = fn(utils.NiceSort(networks))
 
     ssconf_values = {
+      constants.SS_BACKEND_STORAGE: cluster.backend_storage,
       constants.SS_CLUSTER_NAME: cluster.cluster_name,
       constants.SS_CLUSTER_TAGS: cluster_tags,
       constants.SS_FILE_STORAGE_DIR: cluster.file_storage_dir,
