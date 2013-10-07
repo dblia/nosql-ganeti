@@ -44,6 +44,7 @@ from ganeti import compat
 from ganeti import pathutils
 
 from ganeti.utils.algo import *
+from ganeti.utils.couch import *
 from ganeti.utils.filelock import *
 from ganeti.utils.hash import *
 from ganeti.utils.io import *

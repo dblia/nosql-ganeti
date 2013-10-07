@@ -352,7 +352,7 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
                 prealloc_wipe_disks=False, use_external_mip_script=False,
                 hv_state=None, disk_state=None):
   """Initialise the cluster.
-  
+
   @type candidate_pool_size: int
   @param candidate_pool_size: master candidate pool size
   @type backend_storage: string
@@ -617,7 +617,8 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
                                     offline=False, drained=False,
                                     ctime=now, mtime=now,
                                     )
-  InitConfig(constants.CONFIG_VERSION, cluster_config, master_node_config)
+  InitConfig(constants.CONFIG_VERSION, cluster_config, master_node_config,
+             backend_storage=backend_storage)
   cfg = config.GetConfigWriter(backend_storage, offline=True)
   ssh.WriteKnownHostsFile(cfg, pathutils.SSH_KNOWN_HOSTS_FILE)
   cfg.Update(cfg.GetClusterInfo(), logging.error)
@@ -637,7 +638,8 @@ def InitCluster(cluster_name, mac_prefix, # pylint: disable=R0913, R0914
 
 
 def InitConfig(version, cluster_config, master_node_config,
-               cfg_file=pathutils.CLUSTER_CONF_FILE):
+               cfg_file=pathutils.CLUSTER_CONF_FILE,
+               backend_storage=constants.DISK_BACKEND):
   """Create the initial cluster configuration.
 
   It will contain the current node, which will also be the master
@@ -652,7 +654,7 @@ def InitConfig(version, cluster_config, master_node_config,
   @type cfg_file: string
   @param cfg_file: configuration file path
   @type backend_storage: string
-  @param backend_storage: ganeti backend storage type for jqueue and
+  @param backend_storage: ganeti backend storage type for job queue and
                           configuration data
 
   """
@@ -661,30 +663,71 @@ def InitConfig(version, cluster_config, master_node_config,
                                                 _INITCONF_ECID)
   master_node_config.uuid = uuid_generator.Generate([], utils.NewUUID,
                                                     _INITCONF_ECID)
-  nodes = {
-    master_node_config.name: master_node_config,
-    }
-  default_nodegroup = objects.NodeGroup(
-    uuid=uuid_generator.Generate([], utils.NewUUID, _INITCONF_ECID),
+  uuid = uuid_generator.Generate([], utils.NewUUID, _INITCONF_ECID)
+  def_nodegroup = objects.NodeGroup(
+    uuid=uuid,
     name=constants.INITIAL_NODE_GROUP_NAME,
     members=[master_node_config.name],
     diskparams={},
     )
-  nodegroups = {
-    default_nodegroup.uuid: default_nodegroup,
-    }
   now = time.time()
   config_data = objects.ConfigData(version=version,
                                    cluster=cluster_config,
-                                   nodegroups=nodegroups,
-                                   nodes=nodes,
+                                   nodegroups={},
+                                   nodes={},
                                    instances={},
                                    networks={},
                                    serial_no=1,
                                    ctime=now, mtime=now)
-  utils.WriteFile(cfg_file,
-                  data=serializer.Dump(config_data.ToDict()),
-                  mode=0600)
+
+  def _InitDiskBackendStorage():
+    """Helper method for config.data initialization in case of
+    disk backend storage type.
+
+    """
+    nodes = {
+      master_node_config.name: master_node_config,
+      }
+    nodegroups = {
+      def_nodegroup.uuid: def_nodegroup,
+      }
+
+    config_data.nodegroups = nodegroups
+    config_data.nodes = nodes
+
+    utils.WriteFile(cfg_file,
+                    data=serializer.Dump(config_data.ToDict()),
+                    mode=0600)
+
+  def _InitCouchDbBackendStorage():
+    """Helper method for config.data initialization in case of
+    couchdb backend storage type.
+
+    """
+    hostip = master_node_config.primary_ip
+    port = constants.DEFAULT_COUCHDB_PORT
+
+    # Create the config.data related databases
+    cfg_db = utils.CreateDB(constants.CLUSTER_DB, hostip, port)
+    nodes_db = utils.CreateDB(constants.NODES_DB, hostip, port)
+    nodegroups_db = utils.CreateDB(constants.NODEGROUPS_DB, hostip, port)
+    utils.CreateDB(constants.INSTANCES_DB, hostip, port)
+    utils.CreateDB(constants.NETWORKS_DB, hostip, port)
+
+    # pylint: disable=W0212
+    # W0212: Access to a protected member of a client class
+    master_node_config._id = master_node_config.name
+    def_nodegroup._id = uuid
+    config_data._id = "config.data"
+
+    utils.WriteDocument(nodes_db, objects.Node.ToDict(master_node_config))
+    utils.WriteDocument(nodegroups_db, objects.NodeGroup.ToDict(def_nodegroup))
+    utils.WriteDocument(cfg_db, objects.ConfigData.ToDict(config_data))
+
+  if backend_storage == "disk":
+    _InitDiskBackendStorage()
+  elif backend_storage == "couchdb":
+    _InitCouchDbBackendStorage()
 
 
 def FinalizeClusterDestroy(master):
@@ -846,6 +889,47 @@ def MasterFailover(no_voting=False):
   master_ip = sstore.GetMasterIP()
   total_timeout = 30
 
+  def _FailoverCouchDbBackendStorage():
+    """Helper method for master failover in case of couchdb backend storage.
+
+    """
+    master_ip = netutils.Hostname.GetIP(old_master)
+    port = constants.DEFAULT_COUCHDB_PORT
+    # The following variable help us distinguish the case when we failover
+    # from a crashed master or not.
+    master_reachable = True
+
+    try:
+      utils.GetDBInstance(constants.CLUSTER_DB, master_ip, port)
+    except Exception:
+      master_reachable = False
+
+    if master_reachable:
+      # old master's CouchDB server reachable so move replicate
+      # tasks from old master to the new one
+      old_master_ip = netutils.Hostname.GetIP(old_master)
+      new_master_ip = netutils.Hostname.GetIP(new_master)
+      for db_name in constants.CONFIG_DATA_DBS:
+        db_path = "".join(("/", db_name, "/"))
+        utils.MasterFailoverDbs(old_master_ip, new_master_ip, db_path)
+    else:
+      # That means that the old master node have crushed and we
+      # cannot access it's _replicator database to move the tasks
+      # to new master.
+      # So we recreate the tasks to the new server and we manually
+      # delete the tasks from the old master when he's "up" again,
+      # using <gnt-cluster redist-conf> command.
+      mcs_ips = sstore.GetMasterCandidatesIPList()
+      new_master_ip = netutils.Hostname.GetIP(new_master)
+
+      if new_master_ip in mcs_ips:
+        mcs_ips.remove(new_master_ip)
+
+      for mc_ip in mcs_ips:
+        for db_name in constants.CONFIG_DATA_DBS:
+          db_path = "".join(("/", db_name, "/"))
+          utils.UnlockedReplicateSetup(new_master_ip, mc_ip, db_path, False)
+
   # Here we have a phase where no master should be running
   def _check_ip():
     if netutils.TcpPing(master_ip, constants.DEFAULT_NODED_PORT):
@@ -858,10 +942,13 @@ def MasterFailover(no_voting=False):
                     " continuing but activating the master on the current"
                     " node will probably fail", total_timeout)
 
-  jstore_cl = jstore.GetJStore(backend_storage)
+  jstore_cl = jstore.GetJStore("disk")
   if jstore_cl.CheckDrainFlag():
     logging.info("Undraining job queue")
     jstore_cl.SetDrainFlag(False)
+
+  if backend_storage == "couchdb":
+    _FailoverCouchDbBackendStorage()
 
   logging.info("Starting the master daemons on the new master")
 

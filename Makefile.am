@@ -298,7 +298,8 @@ client_PYTHON = \
 config_PYTHON = \
 	lib/config/__init__.py \
 	lib/config/base.py \
-	lib/config/default.py
+	lib/config/default.py \
+	lib/config/couch.py
 
 jqueue_PYTHON = \
 	lib/jqueue/__init__.py \
@@ -363,6 +364,7 @@ pytools_PYTHON = \
 utils_PYTHON = \
 	lib/utils/__init__.py \
 	lib/utils/algo.py \
+	lib/utils/couch.py \
 	lib/utils/filelock.py \
 	lib/utils/hash.py \
 	lib/utils/io.py \

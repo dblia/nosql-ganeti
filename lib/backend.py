@@ -249,6 +249,25 @@ def JobQueuePurge():
   _CleanDirectory(pathutils.JOB_QUEUE_ARCHIVE_DIR)
 
 
+def CouchDBsPurge():
+  """Removes job queue, archived and config.data related databases.
+
+  """
+  my_hostname = netutils.Hostname.GetSysName()
+  my_hostip = netutils.Hostname.GetIP(my_hostname)
+  port = constants.DEFAULT_COUCHDB_PORT
+
+  try:
+    utils.DeleteDB(constants.INSTANCES_DB, my_hostip, port)
+    utils.DeleteDB(constants.NODES_DB, my_hostip, port)
+    utils.DeleteDB(constants.NODEGROUPS_DB, my_hostip, port)
+    utils.DeleteDB(constants.NETWORKS_DB, my_hostip, port)
+    utils.DeleteDB(constants.CLUSTER_DB, my_hostip, port)
+  except Exception:
+    raise errors.OpPrereqError("CouchDB error during cluster destroy in"
+                               " CouchDBsPurge method: %s" % errors.ECODE_NOENT)
+
+
 def GetMasterInfo():
   """Returns master information.
 
@@ -508,9 +527,14 @@ def LeaveCluster(modify_ssh_setup):
   @param modify_ssh_setup: boolean
 
   """
+  backend_storage = _GetConfig().GetBackendStorageType()
   _CleanDirectory(pathutils.DATA_DIR)
   _CleanDirectory(pathutils.CRYPTO_KEYS_DIR)
-  JobQueuePurge()
+
+  if backend_storage == "disk":
+    JobQueuePurge()
+  elif backend_storage == "couchdb":
+    CouchDBsPurge()
 
   if modify_ssh_setup:
     try:
@@ -3121,14 +3145,28 @@ def DemoteFromMC():
   if not result.failed:
     _Fail("The master daemon is running, will not demote")
 
-  try:
-    if os.path.isfile(pathutils.CLUSTER_CONF_FILE):
-      utils.CreateBackup(pathutils.CLUSTER_CONF_FILE)
-  except EnvironmentError, err:
-    if err.errno != errno.ENOENT:
-      _Fail("Error while backing up cluster file: %s", err, exc=True)
+  backend_storage = _GetConfig().GetBackendStorageType()
+  if backend_storage == "disk":
+    try:
+      if os.path.isfile(pathutils.CLUSTER_CONF_FILE):
+        utils.CreateBackup(pathutils.CLUSTER_CONF_FILE)
+    except EnvironmentError, err:
+      if err.errno != errno.ENOENT:
+        _Fail("Error while backing up cluster file: %s", err, exc=True)
 
-  utils.RemoveFile(pathutils.CLUSTER_CONF_FILE)
+    utils.RemoveFile(pathutils.CLUSTER_CONF_FILE)
+  elif backend_storage == "couchdb":
+    # FIXME: create a backup for config.data before delete it.
+    master_ip = netutils.Hostname.GetIP(master)
+    myself_ip = netutils.Hostname.GetIP(myself)
+    results = []
+    try:
+      for db_name in constants.CONFIG_DATA_DBS:
+        db_path = "".join(("/", db_name, "/"))
+        res = utils.UnlockedReplicateSetup(master_ip, myself_ip, db_path, True)
+        results.append((db_path.strip("/"), res))
+    except Exception, err:
+      _Fail("CouchDB error while demoting from MC: %s", err)
 
 
 def _GetX509Filenames(cryptodir, name):

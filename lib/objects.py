@@ -428,6 +428,8 @@ class MasterNetworkParameters(ConfigObject):
 class ConfigData(ConfigObject):
   """Top-level config object."""
   __slots__ = [
+    "_id",
+    "_rev",
     "version",
     "cluster",
     "nodes",
@@ -1006,6 +1008,8 @@ class InstancePolicy(ConfigObject):
 class Instance(TaggableObject):
   """Config object representing an instance."""
   __slots__ = [
+    "_id",
+    "_rev",
     "name",
     "primary_node",
     "os",
@@ -1306,6 +1310,8 @@ class Node(TaggableObject):
 
   """
   __slots__ = [
+    "_id",
+    "_rev",
     "name",
     "primary_ip",
     "secondary_ip",
@@ -1387,6 +1393,8 @@ class Node(TaggableObject):
 class NodeGroup(TaggableObject):
   """Config object representing a node group."""
   __slots__ = [
+    "_id",
+    "_rev",
     "name",
     "members",
     "ndparams",
@@ -2042,6 +2050,8 @@ class Network(TaggableObject):
 
   """
   __slots__ = [
+    "_id",
+    "_rev",
     "name",
     "serial_no",
     "mac_prefix",

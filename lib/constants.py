@@ -171,12 +171,34 @@ JQ_DISK = "disk"
 
 # Available configuration storage types
 CFG_DISK = "disk"
+CFG_COUCHDB = "couchdb"
 
 # Available ganeti backend storage types
 DISK_BACKEND = "disk"
+COUCHDB_BACKEND = "couchdb"
 
 VALID_BACKEND_STORAGE_TYPES = compat.UniqueFrozenset([
-  DISK_BACKEND
+  DISK_BACKEND,
+  COUCHDB_BACKEND
+  ])
+
+# Default port used by CouchDB
+DEFAULT_COUCHDB_PORT = 5984
+
+# Default cluster configuration database names
+CLUSTER_DB = "config_data"
+INSTANCES_DB = "instances"
+NODES_DB = "nodes"
+NODEGROUPS_DB = "nodegroups"
+NETWORKS_DB = "networks"
+REPLICATOR_DB = "_replicator"
+
+CONFIG_DATA_DBS = compat.UniqueFrozenset([
+  CLUSTER_DB,
+  INSTANCES_DB,
+  NODES_DB,
+  NODEGROUPS_DB,
+  NETWORKS_DB
   ])
 
 DAEMONS_LOGBASE = {

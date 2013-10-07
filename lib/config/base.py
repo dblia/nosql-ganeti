@@ -136,7 +136,7 @@ class _BaseConfigWriter(object):
                      self._temporary_secrets, self._temporary_lvs,
                      self._temporary_ips]
     # Note: in order to prevent errors when resolving our name in
-    # _DistributeConfig, we compute it here once and reuse it; it's
+    # DistributeConfig, we compute it here once and reuse it; it's
     # better to raise an error before starting to modify the config
     # file than after it was modified
     self._my_hostname = netutils.Hostname.GetSysName()
@@ -155,6 +155,7 @@ class _BaseConfigWriter(object):
     """
     self._context = context
 
+  # this method needs to be static, so that we can call it on the class
   @staticmethod
   def IsCluster():
     """Check if the cluster is configured.
@@ -1749,16 +1750,13 @@ class _BaseConfigWriter(object):
     """
     raise NotImplementedError()
 
-  def _DistributeConfig(self, feedback_fn):
+  def DistributeConfig(self, *args):
     """Distribute the configuration to the other nodes.
-
-    Currently, this only copies the configuration file. In the future,
-    it could be used to encapsulate the 2/3-phase update mechanism.
 
     """
     raise NotImplementedError()
 
-  def _WriteConfig(self, destination=None, feedback_fn=None):
+  def _WriteConfig(self, *args):
     """Write the configuration data to persistent storage.
 
     """

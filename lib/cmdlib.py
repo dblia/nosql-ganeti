@@ -1651,6 +1651,12 @@ def _AdjustCandidatePool(lu, exceptions):
   if mod_list:
     lu.LogInfo("Promoted nodes to master candidate role: %s",
                utils.CommaJoin(node.name for node in mod_list))
+    # At this point nodes in mod_list are promoted to MCs. So for
+    # couchdb backend storage we have manually to setup the replication
+    # tasks for the new nodes.
+    if ssconf.SimpleStore().GetBackendStorageType() == "couchdb":
+      for node in mod_list:
+        lu.context.cfg.DistributeConfig(node, False)
     for name in mod_list:
       lu.context.ReaddNode(name)
   mc_now, mc_max, _ = lu.cfg.GetMasterCandidateStats(exceptions)
@@ -4630,7 +4636,8 @@ def _ComputeAncillaryFiles(cluster, redist):
   # Files which should only be on master candidates
   files_mc = set()
 
-  if not redist:
+  backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+  if not redist and backend_storage == "disk":
     files_mc.add(pathutils.CLUSTER_CONF_FILE)
 
   # File storage
@@ -4720,6 +4727,32 @@ def _RedistributeAncillaryFiles(lu, additional_nodes=None, additional_vm=True):
       _UploadHelper(lu, node_list, fname)
 
 
+def _RemoveRemainedReplicationTasks(lu):
+  """Remove any remaining replication tasks from master candidates.
+
+  Remained replication tasks in MCs can be found in case of a master failover
+  in a crashed master which is "up" again. In his new role the old master has
+  the old replication tasks untouched, so we remove have to remove them.
+
+  """
+  # Gather target nodes
+  master_info = lu.cfg.GetNodeInfo(lu.cfg.GetMasterNode())
+  online_nodes = lu.cfg.GetMCNodeList()
+  # Remove the master node
+  online_nodes.remove(master_info.name)
+
+  for node in online_nodes:
+    node_info = lu.cfg.GetNodeInfo(node)
+    repl_db = utils.GetDBInstance(constants.REPLICATOR_DB, node_info.primary_ip,
+                                  constants.DEFAULT_COUCHDB_PORT)
+    if len(repl_db) > 1:
+      # Found more tasks in the replicator database of the master candidate.
+      # We remove only the ganeti specific replication tasks.
+      for _id in repl_db:
+        if _id.partition("_to_")[1] == "_to_":
+          repl_db.delete(repl_db.get(_id))
+
+
 class LUClusterRedistConf(NoHooksLU):
   """Force the redistribution of cluster configuration.
 
@@ -4741,6 +4774,8 @@ class LUClusterRedistConf(NoHooksLU):
     """
     self.cfg.Update(self.cfg.GetClusterInfo(), feedback_fn)
     _RedistributeAncillaryFiles(self)
+    if ssconf.SimpleStore().GetBackendStorageType() == "couchdb":
+      _RemoveRemainedReplicationTasks(self)
 
 
 class LUClusterActivateMasterIp(NoHooksLU):
@@ -6658,6 +6693,10 @@ class LUNodeSetParams(LogicalUnit):
     # this will trigger job queue propagation or cleanup if the mc
     # flag changed
     if [old_role, new_role].count(self._ROLE_CANDIDATE) == 1:
+      if new_role == self._ROLE_CANDIDATE and old_role != self._ROLE_OFFLINE:
+        # Here we promote a node to master candidate.
+        # Command: gnt-node modify -C yes <name>
+        self.context.cfg.DistributeConfig(node, False)
       self.context.ReaddNode(node)
 
     return result

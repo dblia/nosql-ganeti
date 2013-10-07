@@ -31,11 +31,14 @@ much memory.
 
 from ganeti import errors
 from ganeti import constants
+
 from ganeti.config import default
+from ganeti.config import couch
 
 # Lookup table for configuration storage types
 _CONFIG_DATA_TYPES = {
-  constants.CFG_DISK: default.DiskConfigWriter
+  constants.CFG_DISK: default.DiskConfigWriter,
+  constants.CFG_COUCHDB: couch.CouchDBConfigWriter
   }
 
 def GetConfigWriterClass(name):
