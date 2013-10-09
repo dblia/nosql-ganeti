@@ -25,11 +25,14 @@
 
 from ganeti import errors
 from ganeti import constants
+
 from ganeti.jqueue import default
+from ganeti.jqueue import couch
 
 # Lookup table for configuration storage types
 _JOB_QUEUE_TYPES = {
-  constants.JQ_DISK: default.DiskJobQueue
+  constants.JQ_DISK: default.DiskJobQueue,
+  constants.JQ_COUCHDB: couch.CouchDBJobQueue
   }
 
 def GetJobQueueClass(name):

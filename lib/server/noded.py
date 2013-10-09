@@ -68,13 +68,39 @@ def _PrepareQueueLock():
   if queue_lock is not None:
     return None
 
-  # Prepare job queue
-  try:
-    jstore_cl = jstore.GetJStore("disk")
-    queue_lock = jstore_cl.InitAndVerifyQueue(must_lock=False)
-    return None
-  except EnvironmentError, err:
-    return err
+  backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+
+  if backend_storage == "disk":
+    # Prepare job queue
+    try:
+      jstore_cl = jstore.GetJStore(backend_storage)
+      queue_lock = jstore_cl.InitAndVerifyQueue(must_lock=False)
+      return None
+    except EnvironmentError, err:
+      return err
+  elif backend_storage == "couchdb":
+    # Setup the connection with the CouchDB server
+    hostname = netutils.Hostname.GetSysName()
+    hostip = netutils.Hostname.GetIP(hostname)
+    port = constants.DEFAULT_COUCHDB_PORT
+    # During cluster init we create the queue related databases at this place,
+    # so every time we rerun the noded the should take care of the fact that
+    # queue databases are already initialized.
+    try:
+      jqueue = utils.CreateDB(constants.QUEUE_DB, hostip, port)
+      jarchive = utils.CreateDB(constants.ARCHIVE_DB, hostip, port)
+    except Exception:
+      jqueue = utils.GetDBInstance(constants.QUEUE_DB, hostip, port)
+      jarchive = utils.GetDBInstance(constants.ARCHIVE_DB, hostip, port)
+
+    # Prepare job queue
+    try:
+      jstore_cl = jstore.GetJStore(backend_storage, queue=jqueue,
+                                   archive=jarchive)
+      queue_lock = jstore_cl.InitAndVerifyQueue(must_lock=False)
+      return None
+    except EnvironmentError, err:
+      return err
 
 
 def _RequireJobQueueLock(fn):
@@ -986,7 +1012,18 @@ class NodeRequestHandler(http.server.HttpServerHandler):
     """
     (flag, ) = params
 
-    jstore_cl = jstore.GetJStore("disk")
+    backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+    if backend_storage == "disk":
+      jstore_cl = jstore.GetJStore(backend_storage)
+    elif backend_storage == "couchdb":
+      # Setup the connection with the CouchDB server
+      hostname = netutils.Hostname.GetSysName()
+      hostip = netutils.Hostname.GetIP(hostname)
+      port = constants.DEFAULT_COUCHDB_PORT
+      jqueue = utils.GetDBInstance(constants.QUEUE_DB, hostip, port)
+      jarchive = utils.GetDBInstance(constants.ARCHIVE_DB, hostip, port)
+      jstore_cl = jstore.GetJStore(backend_storage, queue=jqueue,
+                                   archive=jarchive)
 
     return jstore_cl.SetDrainFlag(flag)
 

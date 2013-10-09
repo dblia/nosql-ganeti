@@ -25,8 +25,12 @@
 
 # pylint: disable=R0904
 # R0904: Too many public methods
+
 # pylint: disable=W0212
 # W0212: Access to a protected member %s of a client class
+
+# pylint: disable=W0221
+# W0221: Arguments number differs from overridden method
 
 import copy
 import os

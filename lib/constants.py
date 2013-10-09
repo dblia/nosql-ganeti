@@ -168,6 +168,7 @@ LAST_DRBD_PORT = 14999
 
 # Available job queue storage types
 JQ_DISK = "disk"
+JQ_COUCHDB = "couchdb"
 
 # Available configuration storage types
 CFG_DISK = "disk"
@@ -192,6 +193,8 @@ NODES_DB = "nodes"
 NODEGROUPS_DB = "nodegroups"
 NETWORKS_DB = "networks"
 REPLICATOR_DB = "_replicator"
+QUEUE_DB = "queue"
+ARCHIVE_DB = "archive"
 
 CONFIG_DATA_DBS = compat.UniqueFrozenset([
   CLUSTER_DB,
@@ -200,6 +203,34 @@ CONFIG_DATA_DBS = compat.UniqueFrozenset([
   NODEGROUPS_DB,
   NETWORKS_DB
   ])
+
+# Default view and filter documents for queue and archive databases
+QUEUE_VIEW = \
+  { "_id" : "_design/queue_view", \
+    "language" : "javascript", \
+    "views" : { \
+      "jobs" : { \
+        "map" : \
+          "function (doc) { \
+            var q; q = doc._id.indexOf('_'); \
+            if ((doc._id != 'serial') && (doc._id != 'version') && (q != 0)) { \
+              emit(doc._id, doc) \
+           }}" \
+       } \
+     } \
+   }
+
+QUEUE_FILTER = \
+  { "_id" : "_design/filter", \
+    "language" : "javascript", \
+    "filters" : { \
+      "job_id" : \
+        "function (doc, req) { \
+          if (doc._id == req.query.id) \
+          { return true; } \
+          else { return false; }}" \
+    } \
+  }
 
 DAEMONS_LOGBASE = {
   NODED: "node-daemon",

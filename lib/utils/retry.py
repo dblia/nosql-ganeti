@@ -177,11 +177,22 @@ def Retry(fn, delay, timeout, args=None, wait_fn=time.sleep,
     assert remaining_time >= 0.0
 
     if calc_delay is None:
-      wait_fn(remaining_time)
+      wait_res = wait_fn(remaining_time)
     else:
       current_delay = calc_delay()
       if current_delay > 0.0:
-        wait_fn(current_delay)
+        wait_res = wait_fn(current_delay)
+
+    # This part of code has been modified for _CouchDBJobFileChangesHelper
+    # class, in order to identify the case when a new _QueuedJob object
+    # should be passed to the new fn() call as argument.
+    # It doesn't affect the rest behaviour of Retry method.
+    try:
+      (poll, result) = wait_res
+      if (poll == 'Polling') and (result != False):
+        args = [result]
+    except (ValueError, TypeError, NameError):
+      pass
 
 
 def SimpleRetry(expected, fn, delay, timeout, args=None, wait_fn=time.sleep,

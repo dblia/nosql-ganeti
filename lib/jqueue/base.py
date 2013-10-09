@@ -274,10 +274,15 @@ class _QueuedJob(object):
     obj = _QueuedJob.__new__(cls)
     obj.queue = queue
     obj.id = int(state["id"])
+    try:
+      obj.rev = state["rev"]
+    except KeyError:
+      obj.rev = None
     obj.received_timestamp = state.get("received_timestamp", None)
     obj.start_timestamp = state.get("start_timestamp", None)
     obj.end_timestamp = state.get("end_timestamp", None)
     obj.archived = archived
+    obj.writable = writable
 
     obj.ops = []
     obj.log_serial = 0
@@ -300,6 +305,7 @@ class _QueuedJob(object):
     """
     return {
       "id": self.id,
+      "rev": self.rev,
       "ops": [op.Serialize() for op in self.ops],
       "start_timestamp": self.start_timestamp,
       "end_timestamp": self.end_timestamp,
@@ -689,18 +695,13 @@ class _BaseWaitForJobChangesHelper(object):
 
   """
   @staticmethod
-  def _CheckForChanges(counter, job_load_fn, check_fn):
+  def _CheckForChanges(counter, check_fn, *args):
     raise NotImplementedError()
 
-  def __call__(self, filename, job_load_fn,
-               fields, prev_job_info, prev_log_serial, timeout,
-               _waiter_cls):
+  def __call__(self, fields, prev_job_info, prev_log_serial, timeout,
+               _waiter_cls, *args):
     """Waits for changes on a job.
 
-    @type filename: string
-    @param filename: File on which to wait for changes
-    @type job_load_fn: callable
-    @param job_load_fn: Function to load job
     @type fields: list of strings
     @param fields: Which fields to check for changes
     @type prev_job_info: list or None
@@ -1611,18 +1612,11 @@ class BaseJobQueue(object):
     addr_list = [self._nodes[name] for name in name_list]
     return name_list, addr_list
 
-  def _UpdateJobQueueFile(self, file_name, data, replicate):
+  def _UpdateJobQueueFile(self, *args):
     """Writes a file locally and then replicates it to all nodes.
 
     This function will replace the contents of a file on the local
     node and then replicate it to all the other nodes we have.
-
-    @type file_name: str
-    @param file_name: the path of the file to be replicated
-    @type data: str
-    @param data: the new contents of the file
-    @type replicate: boolean
-    @param replicate: whether to spread the changes to the remote nodes
 
     """
     raise NotImplementedError()
@@ -1653,17 +1647,12 @@ class BaseJobQueue(object):
     raise NotImplementedError()
 
   @classmethod
-  def _GetJobIDsUnlocked(cls, sort=True, archived=False):
+  def _GetJobIDsUnlocked(cls, archived=False, *args):
     """Return all known job IDs.
 
     The method only looks at disk because it's a requirement that all
     jobs are present on disk (so in the _memcache we don't have any
     extra IDs).
-
-    @type sort: boolean
-    @param sort: perform sorting on the returned job ids
-    @rtype: list
-    @return: the list of job IDs
 
     """
     raise NotImplementedError()

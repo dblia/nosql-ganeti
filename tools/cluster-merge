@@ -35,7 +35,6 @@ import sys
 import tempfile
 
 from ganeti import cli
-from ganeti import config
 from ganeti import constants
 from ganeti import errors
 from ganeti import ssh
@@ -43,6 +42,7 @@ from ganeti import utils
 from ganeti import pathutils
 from ganeti import compat
 
+import ganeti.config as config
 
 _GROUPS_MERGE = "merge"
 _GROUPS_RENAME = "rename"
@@ -370,11 +370,12 @@ class Merger(object):
     """Merges all foreign config into our own config.
 
     """
-    my_config = config.ConfigWriter(offline=True)
+    my_config = config.GetConfigWriter("disk", offline=True)
     fake_ec_id = 0 # Needs to be uniq over the whole config merge
 
     for data in self.merger_data:
-      other_config = config.ConfigWriter(data.config_path, accept_foreign=True)
+      other_config = config.GetConfigWriter("disk", data.config_path,
+                                            accept_foreign=True)
       self._MergeClusterConfigs(my_config, other_config)
       self._MergeNodeGroups(my_config, other_config)
 

@@ -19,8 +19,7 @@
 # 02110-1301, USA.
 
 
-"""Module implementing the job queue handling using disk as backend
-storage type.
+"""Module implementing the job queue handling usign CouchDB as storage type.
 
 """
 
@@ -30,154 +29,112 @@ storage type.
 # pylint: disable=W0221
 # W0221: Arguments number differs from overridden method
 
+# pylint: disable=W0232
+# W0232: Class has no __init__ method
+
+# pylint: disable=W0703
+# W0703: Catching too general exception Exception
+
+import copy
 import logging
-import errno
 import time
 import itertools
 
 try:
-  # pylint: disable=E0611
-  from pyinotify import pyinotify
+  import simplejson as json
 except ImportError:
-  import pyinotify
+  import json
 
-from ganeti import asyncnotifier
 from ganeti import constants
 from ganeti import serializer
 from ganeti import locking
 from ganeti import errors
 from ganeti import utils
 from ganeti import jstore
-from ganeti import runtime
+from ganeti import netutils
 from ganeti import compat
 from ganeti import ht
-from ganeti import pathutils
-from ganeti import vcluster
 
 from ganeti.jqueue import base
 
-# Function and constants needed from base file
+# Functions and constants needed from base file
 _LOCK = base._LOCK
-_QueuedJob = base._QueuedJob
 _RequireOpenQueue = base._RequireOpenQueue
-_JobQueueWorkerPool = base._JobQueueWorkerPool
 _JobDependencyManager = base._JobDependencyManager
+_JobQueueWorkerPool = base._JobQueueWorkerPool
+_QueuedJob = base._QueuedJob
 _JobChangesChecker = base._JobChangesChecker
 
 
-def _CallJqUpdate(runner, names, file_name, content):
-  """Updates job queue file after virtualizing filename.
-
-  """
-  virt_file_name = vcluster.MakeVirtualPath(file_name)
-  return runner.call_jobqueue_update(names, virt_file_name, content)
-
-
-class _DiskJobFileChangesWaiter(base._BaseJobFileChangesWaiter):
-  def __init__(self, filename, _inotify_wm_cls=pyinotify.WatchManager):
+class _CouchDBJobFileChangesWaiter(base._BaseJobFileChangesWaiter):
+  def __init__(self, db_name, job_id, since=None):
     """Initializes this class.
 
-    @type filename: string
-    @param filename: Path to job file
-    @raises errors.InotifyError: if the notifier cannot be setup
+    @type db_name: L{couchdb.client.Database}
+    @param db_name: Database name
+    @type job_id: int
+    @param job_id: Job id to poll for changes
+    @type since: int
+    @param since: Start the results from the change immediately after the given
+                  sequence number.
 
     """
-    self._wm = _inotify_wm_cls()
-    self._inotify_handler = \
-      asyncnotifier.SingleFileEventHandler(self._wm, self._OnInotify, filename)
-    self._notifier = \
-      pyinotify.Notifier(self._wm, default_proc_fun=self._inotify_handler)
-    try:
-      self._inotify_handler.enable()
-    except Exception:
-      # pyinotify doesn't close file descriptors automatically
-      self._notifier.stop()
-      raise
-
-  def _OnInotify(self, notifier_enabled):
-    """Callback for inotify.
-
-    """
-    if not notifier_enabled:
-      self._inotify_handler.enable()
+    self.db_name = db_name
+    self.job_id = str(job_id)
+    if since:
+      self.since = since
+    else:
+      self.since = self.db_name.changes()['last_seq']
 
   def Wait(self, timeout):
-    """Waits for the job file to change.
+    """Waits for the job to change.
 
     @type timeout: float
     @param timeout: Timeout in seconds
-    @return: Whether there have been events
+    @return: Tuple of ('Polling', result) format.
+             If timeout expires result is False, otherwise a new _QueuedJob
+             object with the new data returned. 'Polling' used to distinguish
+             this case in utils.Retry function.
 
     """
     assert timeout >= 0
-    have_events = self._notifier.check_events(timeout * 1000)
-    if have_events:
-      self._notifier.read_events()
-    self._notifier.process_events()
-    return have_events
+    result = False
+    # Convert timeout to int, because changes's timeout option accepts int
+    # values only and increase it by one for rounding reasons.
+    timeout = int(timeout) + 1
+    have_events = self.db_name.changes(filter='filter/job_id', id=self.job_id,
+        feed='longpoll', include_docs=True, since=self.since,
+        timeout=timeout * 1000)
+    if have_events['results']:
+      try:
+        data = have_events['results'][0]['doc']
+        raw = json.loads(data['info'])
+        result = _QueuedJob.Restore(self, raw, writable=False, archived=None)
+      # FIXME: improve error handling for that case
+      except Exception, err:
+        raise errors.JobFileCorrupted(err)
 
-  def Close(self):
-    """Closes underlying notifier and its file descriptor.
+    self.since = have_events['last_seq']
 
-    """
-    self._notifier.stop()
-
-
-class _JobChangesWaiter(object):
-  def __init__(self, filename, _waiter_cls=_DiskJobFileChangesWaiter):
-    """Initializes this class.
-
-    @type filename: string
-    @param filename: Path to job file
-
-    """
-    self._filewaiter = None
-    self._filename = filename
-    self._waiter_cls = _waiter_cls
-
-  def Wait(self, timeout):
-    """Waits for a job to change.
-
-    @type timeout: float
-    @param timeout: Timeout in seconds
-    @return: Whether there have been events
-
-    """
-    if self._filewaiter:
-      return self._filewaiter.Wait(timeout)
-
-    # Lazy setup: Avoid inotify setup cost when job file has already changed.
-    # If this point is reached, return immediately and let caller check the job
-    # file again in case there were changes since the last check. This avoids a
-    # race condition.
-    self._filewaiter = self._waiter_cls(self._filename)
-
-    return True
-
-  def Close(self):
-    """Closes underlying waiter.
-
-    """
-    if self._filewaiter:
-      self._filewaiter.Close()
+    return ('Polling', result)
 
 
-class _DiskWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
-  """Helper class using inotify to wait for changes in a job file.
+class _CouchDBWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
+  """Helper class using _changes database resource to wait for changes in a job
+  document.
 
   This class takes a previous job status and serial, and alerts the client when
   the current job status has changed.
 
   """
   @staticmethod
-  def _CheckForChanges(counter, check_fn, job_load_fn):
+  def _CheckForChanges(counter, check_fn, job):
     if counter.next() > 0:
       # If this isn't the first check the job is given some more time to change
       # again. This gives better performance for jobs generating many
       # changes/messages.
       time.sleep(0.1)
 
-    job = job_load_fn()
     if not job:
       raise errors.JobLost()
 
@@ -188,7 +145,7 @@ class _DiskWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
     return result
 
   def __call__(self, fields, prev_job_info, prev_log_serial, timeout,
-               filename, job_load_fn, _waiter_cls=_JobChangesWaiter):
+               db_name, job, _waiter_cls=_CouchDBJobFileChangesWaiter):
     """Waits for changes on a job.
 
     @type fields: list of strings
@@ -199,30 +156,27 @@ class _DiskWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
     @param prev_log_serial: Last job message serial number
     @type timeout: float
     @param timeout: maximum time to wait in seconds
-    @type filename: string
-    @param filename: File on which to wait for changes
-    @type job_load_fn: callable
-    @param job_load_fn: Function to load job
+    @type db_name: L{couchdb.client.Database}
+    @param db_name: Database name
+    @type job: L{_QueuedJob}
+    @param job: Job object to poll for changes
 
     """
     counter = itertools.count()
     try:
       check_fn = _JobChangesChecker(fields, prev_job_info, prev_log_serial)
-      waiter = _waiter_cls(filename)
-      try:
-        return utils.Retry(compat.partial(self._CheckForChanges,
-                                          counter, check_fn, job_load_fn),
-                           utils.RETRY_REMAINING_TIME, timeout,
-                           wait_fn=waiter.Wait)
-      finally:
-        waiter.Close()
+      waiter = _waiter_cls(db_name, job.id)
+      return utils.Retry(compat.partial(self._CheckForChanges, counter,
+                                        check_fn),
+                         utils.RETRY_REMAINING_TIME, timeout, args=[job],
+                         wait_fn=waiter.Wait)
     except errors.JobLost:
       return None
     except utils.RetryTimeout:
       return constants.JOB_NOTCHANGED
 
 
-class DiskJobQueue(base.BaseJobQueue):
+class CouchDBJobQueue(base.BaseJobQueue):
   """Queue used to manage the jobs.
 
   """
@@ -239,14 +193,22 @@ class DiskJobQueue(base.BaseJobQueue):
         data and other ganeti objects
 
     """
-    super(DiskJobQueue, self).__init__(context)
+    super(CouchDBJobQueue, self).__init__(context)
+    # Get the db connections
+    self._hostip = netutils.Hostname.GetIP(self._my_hostname)
+    self._queue_db = utils.GetDBInstance(constants.QUEUE_DB, self._hostip,
+                                         constants.DEFAULT_COUCHDB_PORT)
+    self._archive = utils.GetDBInstance(constants.ARCHIVE_DB, self._hostip,
+                                        constants.DEFAULT_COUCHDB_PORT)
+
     # Initialize the queue, and acquire the filelock.
     # This ensures no other process is working on the job queue.
-    self.jstore_cl = jstore.GetJStore("disk")
-    self._queue_filelock = self.jstore_cl.InitAndVerifyQueue(must_lock=True)
+    self._jstore = jstore.GetJStore("couchdb", queue=self._queue_db,
+                                    archive=self._archive)
+    self._queue_filelock =  self._jstore.InitAndVerifyQueue(must_lock=True)
 
     # Read serial file
-    self._last_serial = self.jstore_cl.ReadSerial()
+    (self._last_serial, self._serial_doc_rev) = self._jstore.ReadSerial()
     assert self._last_serial is not None, ("Serial file was modified between"
                                            " check in jstore and here")
 
@@ -263,7 +225,9 @@ class DiskJobQueue(base.BaseJobQueue):
     self._queue_size = None
     self._UpdateQueueSizeUnlocked()
     assert ht.TInt(self._queue_size)
-    self._drained = self.jstore_cl.CheckDrainFlag()
+
+    self._drained = self._jstore.CheckDrainFlag()
+    self._drain_rev = self._jstore.ReadDrain()
 
     # Job dependencies
     self.depmgr = _JobDependencyManager(self._GetJobStatusForDependencies,
@@ -291,10 +255,10 @@ class DiskJobQueue(base.BaseJobQueue):
 
     restartjobs = []
 
-    all_job_ids = self._GetJobIDsUnlocked()
-    jobs_count = len(all_job_ids)
+    all_jobs = self._GetJobsUnlocked(archived=False)
+    jobs_count = len(all_jobs)
     lastinfo = time.time()
-    for idx, job_id in enumerate(all_job_ids):
+    for idx, jdoc in enumerate(all_jobs):
       # Give an update every 1000 jobs or 10 seconds
       if (idx % 1000 == 0 or time.time() >= (lastinfo + 10.0) or
           idx == (jobs_count - 1)):
@@ -302,10 +266,16 @@ class DiskJobQueue(base.BaseJobQueue):
                      idx, jobs_count - 1, 100.0 * (idx + 1) / jobs_count)
         lastinfo = time.time()
 
-      job = self._LoadJobUnlocked(job_id)
-
-      # a failure in loading the job can cause 'None' to be returned
-      if job is None:
+      data = json.loads(jdoc['info'])
+      # job = self._LoadJobUnlocked(job_id) will cause writable and archived
+      # variables to be set to True and None respectively.
+      try:
+        job = _QueuedJob.Restore(self, data, True, None)
+#        job = _QueuedJob.Restore(jdoc['_id'], data, writable=True,
+#                                 archived=None)
+#        job = self._LoadJobUnlocked(jdoc['_id'])
+      # a failure in job Restore can cause an exception here
+      except Exception:
         continue
 
       status = job.CalcStatus()
@@ -316,7 +286,7 @@ class DiskJobQueue(base.BaseJobQueue):
       elif status in (constants.JOB_STATUS_RUNNING,
                       constants.JOB_STATUS_WAITING,
                       constants.JOB_STATUS_CANCELING):
-        logging.warning("Unfinished job %s found: %s", job.id, job)
+        logging.warning("Unfinished job %s, %s found: %s", job.id, job.rev, job)
 
         if status == constants.JOB_STATUS_WAITING:
           # Restart job
@@ -335,6 +305,7 @@ class DiskJobQueue(base.BaseJobQueue):
 
     logging.info("Job queue inspection finished")
 
+
   @locking.ssynchronized(_LOCK)
   @_RequireOpenQueue
   def AddNode(self, node):
@@ -347,49 +318,21 @@ class DiskJobQueue(base.BaseJobQueue):
     node_name = node.name
     assert node_name != self._my_hostname
 
-    # Clean queue directory on added node
-    result = self._GetRpc(None).call_jobqueue_purge(node_name)
-    msg = result.fail_msg
-    if msg:
-      logging.warning("Cannot cleanup queue directory on node %s: %s",
-                      node_name, msg)
-
     if not node.master_candidate:
       # remove if existing, ignoring errors
       self._nodes.pop(node_name, None)
       # and skip the replication of the job ids
       return
-
-    # Upload the whole queue excluding archived jobs
-    files = [self._GetJobPath(job_id) for job_id in self._GetJobIDsUnlocked()]
-
-    # Upload current serial file
-    files.append(pathutils.JOB_QUEUE_SERIAL_FILE)
-
-    # Static address list
-    addrs = [node.primary_ip]
-
-    for file_name in files:
-      # Read file content
-      content = utils.ReadFile(file_name)
-
-      result = _CallJqUpdate(self._GetRpc(addrs), [node_name],
-                             file_name, content)
-      msg = result[node_name].fail_msg
-      if msg:
-        logging.error("Failed to upload file %s to node %s: %s",
-                      file_name, node_name, msg)
-
-    # Set queue drained flag
-    result = \
-      self._GetRpc(addrs).call_jobqueue_set_drain_flag([node_name],
-                                                       self._drained)
-    msg = result[node_name].fail_msg
-    if msg:
-      logging.error("Failed to set queue drained flag on node %s: %s",
-                    node_name, msg)
+    else:
+      jq_path = "".join(("/", constants.QUEUE_DB, "/"))
+      arch_path = "".join(("/", constants.ARCHIVE_DB, "/"))
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, jq_path,
+                                   False)
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, arch_path,
+                                   False)
 
     self._nodes[node_name] = node.primary_ip
+
 
   @locking.ssynchronized(_LOCK)
   @_RequireOpenQueue
@@ -397,53 +340,63 @@ class DiskJobQueue(base.BaseJobQueue):
     """Callback called when removing nodes from the cluster.
 
     @type node: L{objects.Node}
-    @param node: the node object to remove
+    @param node: the node object to be added
 
     """
     self._nodes.pop(node.name, None)
 
-  def _UpdateJobQueueFile(self, file_name, data, replicate):
-    """Writes a file locally and then replicates it to all nodes.
+    if node.master_candidate:
+      jq_path = "".join(("/", constants.QUEUE_DB, "/"))
+      arch_path = "".join(("/", constants.ARCHIVE_DB, "/"))
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, jq_path, True)
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, arch_path,
+                                   True)
 
-    This function will replace the contents of a file on the local
-    node and then replicate it to all the other nodes we have.
 
-    @type file_name: str
-    @param file_name: the path of the file to be replicated
+  def _UpdateJobQueueFile(self, data, job):
+    """Writes a file in local db and then auto replicate it to all nodes.
+
+    This function will replace the contents of a file on the local node
+    and then couchdb server will automatic replicate it to all the other
+    nodes we have.
+
     @type data: str
     @param data: the new contents of the file
     @type replicate: boolean
     @param replicate: whether to spread the changes to the remote nodes
+    @type job: L{_QueuedJob}
+    @param job: the job to be updated
 
     """
-    getents = runtime.GetEnts()
-    utils.WriteFile(file_name, data=data, uid=getents.masterd_uid,
-                    gid=getents.daemons_gid,
-                    mode=constants.JOB_QUEUE_FILES_PERMS)
+    if job.rev == None:
+      doc = { '_id' : str(job.id), 'info' : data }
+      job.rev = utils.WriteDocument(self._queue_db, doc)
+    else:
+      doc = { '_id' : str(job.id), '_rev': job.rev, 'info' : data }
+      job.rev = utils.WriteDocument(self._queue_db, doc)
 
-    if replicate:
-      names, addrs = self._GetNodeIp()
-      result = _CallJqUpdate(self._GetRpc(addrs), names, file_name, data)
-      self._CheckRpcResult(result, self._nodes, "Updating %s" % file_name)
 
-  def _RenameFilesUnlocked(self, rename):
-    """Renames a file locally and then replicate the change.
+  def _RenameFilesUnlocked(self, arch_jobs, del_jobs):
+    """Rename a job list from queue to archive db.
 
-    This function will rename a file in the local queue directory
-    and then replicate this rename to all the other nodes we have.
+    This function will delete the del_jobs given from jqueue db and
+    then will save arch_jobs to the archive db
 
-    @type rename: list of (old, new)
-    @param rename: List containing tuples mapping old to new names
+    @type arch_jobs: list of job documents
+    @param arch_jobs: List containing jobs to be archived
+    @type del_jobs: list of job documents
+    @param del_jobs: List containing jobs to be deleted
 
     """
-    # Rename them locally
-    for old, new in rename:
-      utils.RenameFile(old, new, mkdir=True)
+    try:
+      self._queue_db.update(del_jobs)
+      # FIXME: handle conflicts when updating a job that exists
+      # in the archive dir
+      self._archive.update(arch_jobs)
+    # FIXME: improve error handling for that case
+    except Exception, err:
+      raise errors.JobQueueError("_RenameFilesUnlocked: ", err)
 
-    # ... and on all nodes
-    names, addrs = self._GetNodeIp()
-    result = self._GetRpc(addrs).call_jobqueue_rename(names, rename)
-    self._CheckRpcResult(result, self._nodes, "Renaming files (%r)" % rename)
 
   def _NewSerialsUnlocked(self, count):
     """Generates a new job identifier.
@@ -461,9 +414,9 @@ class DiskJobQueue(base.BaseJobQueue):
     # New number
     serial = self._last_serial + count
 
-    # Write to file
-    self._UpdateJobQueueFile(pathutils.JOB_QUEUE_SERIAL_FILE,
-                             "%s\n" % serial, True)
+    # Write to database
+    data = { '_id' : 'serial', '_rev' : self._serial_doc_rev, 'value' : serial }
+    self._serial_doc_rev = utils.WriteDocument(self._queue_db, data)
 
     result = [jstore.FormatJobID(v)
               for v in range(self._last_serial + 1, serial + 1)]
@@ -475,82 +428,62 @@ class DiskJobQueue(base.BaseJobQueue):
 
     return result
 
-  @staticmethod
-  def _GetJobPath(job_id):
-    """Returns the job file for a given job id.
 
-    @type job_id: str
-    @param job_id: the job identifier
-    @rtype: str
-    @return: the path to the job file
-
-    """
-    return utils.PathJoin(pathutils.QUEUE_DIR, "job-%s" % job_id)
-
-  @staticmethod
-  def _GetArchivedJobPath(job_id):
-    """Returns the archived job file for a give job id.
-
-    @type job_id: str
-    @param job_id: the job identifier
-    @rtype: str
-    @return: the path to the archived job file
-
-    """
-    return utils.PathJoin(pathutils.JOB_QUEUE_ARCHIVE_DIR,
-                          jstore.GetArchiveDirectory(job_id),
-                          "job-%s" % job_id)
-
-  @staticmethod
-  def _DetermineJobDirectories(archived):
-    """Build list of directories containing job files.
-
-    @type archived: bool
-    @param archived: Whether to include directories for archived jobs
-    @rtype: list
-
-    """
-    result = [pathutils.QUEUE_DIR]
-
-    if archived:
-      archive_path = pathutils.JOB_QUEUE_ARCHIVE_DIR
-      result.extend(map(compat.partial(utils.PathJoin, archive_path),
-                        utils.ListVisibleFiles(archive_path)))
-
-    return result
-
-  @classmethod
-  def _GetJobIDsUnlocked(cls, sort=True, archived=False):
+  def _GetJobIDsUnlocked(self, archived=False):
     """Return all known job IDs.
 
-    The method only looks at disk because it's a requirement that all
-    jobs are present on disk (so in the _memcache we don't have any
+    The method only looks at database because it's a requirement that all
+    jobs are present on database (so in the _memcache we don't have any
     extra IDs).
 
-    @type sort: boolean
-    @param sort: perform sorting on the returned job ids
-    @rtype: list
+    @rtype: list of L{couchdb.client.Document}
     @return: the list of job IDs
 
     """
     jlist = []
 
-    for path in cls._DetermineJobDirectories(archived):
-      for filename in utils.ListVisibleFiles(path):
-        m = constants.JOB_FILE_RE.match(filename)
-        if m:
-          jlist.append(int(m.group(1)))
+    if archived:
+      arch_view_res = self._archive.view('queue_view/jobs')
+      for row in arch_view_res.rows:
+        jlist.append(int(row['id']))
 
-    if sort:
-      jlist.sort()
+    view_res = self._queue_db.view('queue_view/jobs')
+    for row in view_res.rows:
+      jlist.append(int(row['id']))
+
     return jlist
 
+  def _GetJobsUnlocked(self, archived=False):
+    """Return all known jobs.
+
+    This method is the same as _GetJobIDsUnlocked but returns a list
+    with all job docs from the db.
+
+    @rtype: list of L{couchdb.client.Document}
+    @return: the list of job documents
+
+    """
+    jlist = []
+
+    if archived:
+      arch_view_res = self._archive.view('queue_view/jobs', include_docs=True)
+      for row in arch_view_res.rows:
+        jlist.append(row['doc'])
+
+    view_res = self._queue_db.view('queue_view/jobs', include_docs=True)
+    for row in view_res.rows:
+      jlist.append(row['doc'])
+
+    return jlist
+
+
+  # FIXME: write that function cleaner
   def _LoadJobUnlocked(self, job_id):
-    """Loads a job from the disk or memory.
+    """Loads a job from the database or memory.
 
     Given a job id, this will return the cached job object if
-    existing, or try to load the job from the disk. If loading from
-    disk, it will also add the job to the cache.
+    existing, or try to load the job from the db. If loading from
+    db, it will also add the job to the cache.
 
     @type job_id: int
     @param job_id: the job id
@@ -559,6 +492,7 @@ class DiskJobQueue(base.BaseJobQueue):
 
     """
     job = self._memcache.get(job_id, None)
+
     if job:
       logging.debug("Found job %s in memcache", job_id)
       assert job.writable, "Found read-only job in memcache"
@@ -569,15 +503,16 @@ class DiskJobQueue(base.BaseJobQueue):
       if job is None:
         return job
     except errors.JobFileCorrupted:
-      old_path = self._GetJobPath(job_id)
-      new_path = self._GetArchivedJobPath(job_id)
-      if old_path == new_path:
+      job = self._LoadJobFromDisk(job_id, True)
+      if job is None:
         # job already archived (future case)
         logging.exception("Can't parse job %s", job_id)
       else:
         # non-archived case
         logging.exception("Can't parse job %s, will archive.", job_id)
-        self._RenameFilesUnlocked([(old_path, new_path)])
+        # FIXME: handle this case
+        # self._RenameFilesUnlocked([job.id])
+        raise errors.JobQueueError("_LoadJobUnlocked: ", err)
       return None
 
     assert job.writable, "Job just loaded is not writable"
@@ -599,22 +534,22 @@ class DiskJobQueue(base.BaseJobQueue):
     @return: either None or the job object
 
     """
-    path_functions = [(self._GetJobPath, False)]
-
-    if try_archived:
-      path_functions.append((self._GetArchivedJobPath, True))
+    db_names = [self._queue_db]
 
     raw_data = None
     archived = None
 
-    for (fn, archived) in path_functions:
-      filepath = fn(job_id)
-      logging.debug("Loading job from %s", filepath)
+    if try_archived:
+      db_names.append(self._archive)
+
+    for db in db_names:
       try:
-        raw_data = utils.ReadFile(filepath)
-      except EnvironmentError, err:
-        if err.errno != errno.ENOENT:
-          raise
+        doc = db.get(str(job_id))
+        raw_data = doc['info']
+      except TypeError, err:
+        msg = ("The job with id: %s, haven't found on db: %s. %s"  % (job_id,
+               self._queue_db, errors.ECODE_NOENT))
+        raise errors.OpPrereqError(msg)
       else:
         break
 
@@ -632,32 +567,13 @@ class DiskJobQueue(base.BaseJobQueue):
 
     return job
 
-  def SafeLoadJobFromDisk(self, job_id, try_archived, writable=None):
-    """Load the given job file from disk.
-
-    Given a job file, read, load and restore it in a _QueuedJob format.
-    In case of error reading the job, it gets returned as None, and the
-    exception is logged.
-
-    @type job_id: int
-    @param job_id: job identifier
-    @type try_archived: bool
-    @param try_archived: Whether to try loading an archived job
-    @rtype: L{_QueuedJob} or None
-    @return: either None or the job object
-
-    """
-    try:
-      return self._LoadJobFromDisk(job_id, try_archived, writable=writable)
-    except (errors.JobFileCorrupted, EnvironmentError):
-      logging.exception("Can't load/parse job %s", job_id)
-      return None
-
   def _UpdateQueueSizeUnlocked(self):
     """Update the queue size.
 
     """
-    self._queue_size = len(self._GetJobIDsUnlocked(sort=False))
+    # The queue size is the length of the queue database minus the serial,
+    # version, filter and queue_view documents.
+    self._queue_size = len(self._queue_db) - 4
 
   @locking.ssynchronized(_LOCK)
   @_RequireOpenQueue
@@ -668,17 +584,10 @@ class DiskJobQueue(base.BaseJobQueue):
     @param drain_flag: Whether to set or unset the drain flag
 
     """
-    # Change flag locally
-    self.jstore_cl.SetDrainFlag(drain_flag)
+    self._drain_rev = \
+      self._jstore.SetDrainFlag(drain_flag, self._drain_rev)
 
     self._drained = drain_flag
-
-    # ... and on all nodes
-    (names, addrs) = self._GetNodeIp()
-    result = \
-      self._GetRpc(addrs).call_jobqueue_set_drain_flag(names, drain_flag)
-    self._CheckRpcResult(result, self._nodes,
-                         "Setting queue drain flag to %s" % drain_flag)
 
     return True
 
@@ -702,10 +611,9 @@ class DiskJobQueue(base.BaseJobQueue):
       assert job.writable, "Can't update read-only job"
       assert not job.archived, "Can't update archived job"
 
-    filename = self._GetJobPath(job.id)
     data = serializer.DumpJson(job.Serialize())
-    logging.debug("Writing job %s to %s", job.id, filename)
-    self._UpdateJobQueueFile(filename, data, replicate)
+    logging.debug("Writing job %s, %s to %s", job.id, job.rev, self._queue_db)
+    self._UpdateJobQueueFile(data, job)
 
   def WaitForJobChanges(self, job_id, fields, prev_job_info, prev_log_serial,
                         timeout):
@@ -731,16 +639,15 @@ class DiskJobQueue(base.BaseJobQueue):
         as such by the clients
 
     """
-    load_fn = compat.partial(self.SafeLoadJobFromDisk, job_id, True,
-                             writable=False)
+    job_obj = self.SafeLoadJobFromDisk(job_id, True, writable=False)
 
-    helper = _DiskWaitForJobChangesHelper()
+    helper = _CouchDBWaitForJobChangesHelper()
 
     return helper(fields, prev_job_info, prev_log_serial, timeout,
-                  self._GetJobPath(job_id), load_fn)
+                  self._queue_db, job_obj)
 
   @_RequireOpenQueue
-  def _ArchiveJobsUnlocked(self, jobs):
+  def _ArchiveJobsUnlocked(self, job_list):
     """Archives jobs.
 
     @type jobs: list of L{_QueuedJob}
@@ -750,8 +657,14 @@ class DiskJobQueue(base.BaseJobQueue):
 
     """
     archive_jobs = []
-    rename_files = []
-    for job in jobs:
+    deleted_jobs = []
+    for arch_job, del_job in job_list:
+      # XXX: Because this function called from ArchiveJob and AutoArchiveJobs
+      # only, the writable and archived fields are always True and None, due to
+      # _LoadJobUnlocked(job_id) call which produces that result, so i remove
+      # them to improve job archive speed. Leave it as it is for now
+      data = json.loads(arch_job['info'])
+      job = _QueuedJob.Restore(self, data, True, None)
       assert job.writable, "Can't archive read-only job"
       assert not job.archived, "Can't cancel archived job"
 
@@ -759,17 +672,16 @@ class DiskJobQueue(base.BaseJobQueue):
         logging.debug("Job %s is not yet done", job.id)
         continue
 
-      archive_jobs.append(job)
-
-      old = self._GetJobPath(job.id)
-      new = self._GetArchivedJobPath(job.id)
-      rename_files.append((old, new))
+      arch_job['archive_index'] = jstore.GetArchiveDirectory(arch_job['_id'])
+      del_job['_deleted'] = True
+      archive_jobs.append(arch_job)
+      deleted_jobs.append(del_job)
 
     # TODO: What if 1..n files fail to rename?
-    self._RenameFilesUnlocked(rename_files)
+    self._RenameFilesUnlocked(archive_jobs, deleted_jobs)
 
     logging.debug("Successfully archived job(s) %s",
-                  utils.CommaJoin(job.id for job in archive_jobs))
+                  utils.CommaJoin(job['_id'] for job in archive_jobs))
 
     # Since we haven't quite checked, above, if we succeeded or failed renaming
     # the files, we update the cached queue size from the filesystem. When we
@@ -793,12 +705,15 @@ class DiskJobQueue(base.BaseJobQueue):
     """
     logging.info("Archiving job %s", job_id)
 
-    job = self._LoadJobUnlocked(job_id)
+    # job = self._LoadJobUnlocked(job_id)
+    job = self._queue_db.get(str(job_id))
     if not job:
       logging.debug("Job %s not found", job_id)
       return False
 
-    return self._ArchiveJobsUnlocked([job]) == 1
+    dict_job = dict(job)
+    dict_job2 = copy.deepcopy(dict_job)
+    return self._ArchiveJobsUnlocked([(dict_job, dict_job2)]) == 1
 
   @locking.ssynchronized(_LOCK)
   @_RequireOpenQueue
@@ -821,9 +736,9 @@ class DiskJobQueue(base.BaseJobQueue):
     archived_count = 0
     last_touched = 0
 
-    all_job_ids = self._GetJobIDsUnlocked()
+    all_jobs = self._GetJobsUnlocked(archived=True)
     pending = []
-    for idx, job_id in enumerate(all_job_ids):
+    for idx, jdoc in enumerate(all_jobs):
       last_touched = idx + 1
 
       # Not optimal because jobs could be pending
@@ -833,7 +748,9 @@ class DiskJobQueue(base.BaseJobQueue):
         break
 
       # Returns None if the job failed to load
-      job = self._LoadJobUnlocked(job_id)
+      data = json.loads(jdoc['info'])
+#      job = _QueuedJob.Restore(jdoc['_id'], data, writable=True, archived=None)
+      job = _QueuedJob.Restore(self, data, True, None)
       if job:
         if job.end_timestamp is None:
           if job.start_timestamp is None:
@@ -844,7 +761,8 @@ class DiskJobQueue(base.BaseJobQueue):
           job_age = job.end_timestamp
 
         if age == -1 or now - job_age[0] > age:
-          pending.append(job)
+          jdoc2 = copy.deepcopy(jdoc)
+          pending.append((jdoc, jdoc2))
 
           # Archive 10 jobs at a time
           if len(pending) >= 10:
@@ -854,4 +772,4 @@ class DiskJobQueue(base.BaseJobQueue):
     if pending:
       archived_count += self._ArchiveJobsUnlocked(pending)
 
-    return (archived_count, len(all_job_ids) - last_touched)
+    return (archived_count, len(all_jobs) - last_touched)

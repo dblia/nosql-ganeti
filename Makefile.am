@@ -304,7 +304,8 @@ config_PYTHON = \
 jqueue_PYTHON = \
 	lib/jqueue/__init__.py \
 	lib/jqueue/base.py \
-	lib/jqueue/default.py
+	lib/jqueue/default.py \
+	lib/jqueue/couch.py
 
 hypervisor_PYTHON = \
 	lib/hypervisor/__init__.py \

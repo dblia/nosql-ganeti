@@ -245,19 +245,19 @@ class TestWaitForJobChangesHelper(unittest.TestCase):
     wfjc = _WaitForJobChangesHelper()
 
     # No change
-    self.assertEqual(wfjc(self.filename, self._LoadWaitingJob, ["status"],
-                          [constants.JOB_STATUS_WAITING], None, 0.1),
+    self.assertEqual(wfjc(["status"], [constants.JOB_STATUS_WAITING], None,
+                     0.1, self.filename, self._LoadWaitingJob),
                      constants.JOB_NOTCHANGED)
 
     # No previous information
-    self.assertEqual(wfjc(self.filename, self._LoadWaitingJob,
-                          ["status"], None, None, 1.0),
+    self.assertEqual(wfjc(["status"], None, None, 1.0,
+                          self.filename, self._LoadWaitingJob),
                      ([constants.JOB_STATUS_WAITING], []))
 
   def testLostJob(self):
     wfjc = _WaitForJobChangesHelper()
-    self.assert_(wfjc(self.filename, self._LoadLostJob,
-                      ["status"], None, None, 1.0) is None)
+    self.assert_(wfjc(["status"], None, None, 1.0,
+                      self.filename, self._LoadLostJob) is None)
 
   def testNonExistentFile(self):
     wfjc = _WaitForJobChangesHelper()
@@ -265,7 +265,7 @@ class TestWaitForJobChangesHelper(unittest.TestCase):
     filename = utils.PathJoin(self.tmpdir, "does-not-exist")
     self.assertFalse(os.path.exists(filename))
 
-    result = wfjc(filename, self._LoadLostJob, ["status"], None, None, 1.0,
+    result = wfjc(["status"], None, None, 1.0, filename, self._LoadLostJob,
                   _waiter_cls=compat.partial(_JobChangesWaiter,
                                              _waiter_cls=NotImplemented))
     self.assertTrue(result is None)
@@ -283,8 +283,8 @@ class TestWaitForJobChangesHelper(unittest.TestCase):
     # Test if failing to watch a job file (e.g. due to
     # fs.inotify.max_user_watches being too low) raises errors.InotifyError
     self.assertRaises(errors.InotifyError, wfjc,
-                      self.filename, self._LoadWaitingJob,
                       ["status"], [constants.JOB_STATUS_WAITING], None, 1.0,
+                      self.filename, self._LoadWaitingJob,
                       _waiter_cls=jobchange_waiter_cls)
 
 

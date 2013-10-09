@@ -40,10 +40,10 @@ from ganeti import serializer
 from ganeti import utils
 from ganeti import cli
 from ganeti import bootstrap
-from ganeti import config
 from ganeti import netutils
 from ganeti import pathutils
 
+import ganeti.config as config
 
 options = None
 args = None
@@ -337,9 +337,9 @@ def main():
   all_ok = True
   if not (options.dry_run or options.no_verify):
     logging.info("Testing the new config file...")
-    cfg = config.ConfigWriter(cfg_file=options.CONFIG_DATA_PATH,
-                              accept_foreign=options.ignore_hostname,
-                              offline=True)
+    cfg = config.GetConfigWriter("disk", cfg_file=options.CONFIG_DATA_PATH,
+                                 accept_foreign=options.ignore_hostname,
+                                 offline=True)
     # if we reached this, it's all fine
     vrfy = cfg.VerifyConfig()
     if vrfy:

@@ -22,6 +22,9 @@
 
 """
 
+# pylint: disable=W0703
+# W0703: Catching too general exception Exception
+
 import couchdb.client
 
 from ganeti import errors
@@ -164,7 +167,8 @@ def GetDBInstance(db_name, host_ip, port):
     db = server[db_name]
   except Exception:
     msg = ("The database name given (%s), does not belong to the host"
-           " IP (%s): %s" % (db_name, host_ip, errors.ECODE_NOENT))
+           " IP (%s) or CouchDB server is down: %s" % (db_name, host_ip,
+           errors.ECODE_NOENT))
     raise errors.OpPrereqError(msg)
   else:
     return db
@@ -258,7 +262,7 @@ def MasterFailoverDbs(old_master_ip, new_master_ip, db_name):
       if target == new_source:
         target = old_source
       new_repl_doc_id = "".join(["from_", new_source, "_to_", target])
-      repl_doc = { "source" : new_source, "target" : target, 
+      repl_doc = { "source" : new_source, "target" : target,
                    "continuous" : True, "create_target" :  True }
       new_repl_db[new_repl_doc_id] = repl_doc
 
@@ -285,8 +289,7 @@ def WriteDocument(db_name, data):
       # Save it
       (_, doc_rev) = db_name.save(data)
     except Exception:
-      # FIXME: This exception possible happens due to couchdb
-      # hard shutdown. Raise an exception here.
+      # This exception happens due to a hard CouchDB server shutdown
       raise errors.JobQueueError("CouchDB is down, refusing job")
 
   return doc_rev

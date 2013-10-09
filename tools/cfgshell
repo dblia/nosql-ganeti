@@ -40,9 +40,9 @@ except ImportError:
   pass
 
 from ganeti import errors
-from ganeti import config
 from ganeti import objects
 
+import ganeti.config as config
 
 class ConfigShell(cmd.Cmd):
   """Command tool for editing the config file.
@@ -153,7 +153,7 @@ class ConfigShell(cmd.Cmd):
     else:
       arg = None
     try:
-      self.cfg = config.ConfigWriter(cfg_file=arg, offline=True)
+      self.cfg = config.GetConfigWriter("disk", cfg_file=arg, offline=True)
       self.parents = [self.cfg._config_data] # pylint: disable=W0212
       self.path = []
     except errors.ConfigurationError, err:

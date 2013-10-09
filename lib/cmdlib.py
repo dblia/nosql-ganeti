@@ -62,6 +62,7 @@ from ganeti import runtime
 from ganeti import pathutils
 from ganeti import vcluster
 from ganeti import network
+from ganeti import jstore
 from ganeti.masterd import iallocator
 
 import ganeti.masterd.instance # pylint: disable=W0611
@@ -6866,7 +6867,18 @@ class _ClusterQuery(_QueryBase):
       cluster = NotImplemented
 
     if query.CQ_QUEUE_DRAINED in self.requested_data:
-      drain_flag = os.path.exists(pathutils.JOB_QUEUE_DRAIN_FILE)
+      backend_storage = ssconf.SimpleStore().GetBackendStorageType()
+      if backend_storage == "disk":
+        drain_flag = os.path.exists(pathutils.JOB_QUEUE_DRAIN_FILE)
+      elif backend_storage == "couchdb":
+        hostname = lu.cfg.GetMasterNode()
+        hostip = netutils.Hostname.GetIP(hostname)
+        port = constants.DEFAULT_COUCHDB_PORT
+        jqueue = utils.GetDBInstance(constants.QUEUE_DB, hostip, port)
+        jarchive = utils.GetDBInstance(constants.ARCHIVE_DB, hostip, port)
+        jstore_cl = jstore.GetJStore(backend_storage, queue=jqueue,
+                                     archive=jarchive)
+        drain_flag = jstore_cl.CheckDrainFlag()
     else:
       drain_flag = NotImplemented
 

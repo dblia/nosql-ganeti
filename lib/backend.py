@@ -34,6 +34,8 @@
 # inferred), because the _TryOSFromDisk returns either (True, os_obj)
 # or (False, "string") which confuses pylint
 
+# pylint: disable=W0703
+# W0703: Catching too general exception Exception
 
 import os
 import os.path
@@ -258,11 +260,13 @@ def CouchDBsPurge():
   port = constants.DEFAULT_COUCHDB_PORT
 
   try:
+    utils.DeleteDB(constants.QUEUE_DB, my_hostip, port)
+    utils.DeleteDB(constants.ARCHIVE_DB, my_hostip, port)
+    utils.DeleteDB(constants.CLUSTER_DB, my_hostip, port)
     utils.DeleteDB(constants.INSTANCES_DB, my_hostip, port)
     utils.DeleteDB(constants.NODES_DB, my_hostip, port)
     utils.DeleteDB(constants.NODEGROUPS_DB, my_hostip, port)
     utils.DeleteDB(constants.NETWORKS_DB, my_hostip, port)
-    utils.DeleteDB(constants.CLUSTER_DB, my_hostip, port)
   except Exception:
     raise errors.OpPrereqError("CouchDB error during cluster destroy in"
                                " CouchDBsPurge method: %s" % errors.ECODE_NOENT)
@@ -3156,11 +3160,19 @@ def DemoteFromMC():
 
     utils.RemoveFile(pathutils.CLUSTER_CONF_FILE)
   elif backend_storage == "couchdb":
-    # FIXME: create a backup for config.data before delete it.
+    # FIXME: create a backup for config.data for couchdb backend
+    # before we delete it.
     master_ip = netutils.Hostname.GetIP(master)
     myself_ip = netutils.Hostname.GetIP(myself)
     results = []
+    jq_db_path = "".join(("/", constants.QUEUE_DB, "/"))
+    arch_db_path = "".join(("/", constants.ARCHIVE_DB, "/"))
     try:
+      res = utils.UnlockedReplicateSetup(master_ip, myself_ip, jq_db_path, True)
+      results.append((jq_db_path.strip("/"), res))
+      res = utils.UnlockedReplicateSetup(master_ip, myself_ip, arch_db_path,
+                                         True)
+      results.append((arch_db_path.strip("/"), res))
       for db_name in constants.CONFIG_DATA_DBS:
         db_path = "".join(("/", db_name, "/"))
         res = utils.UnlockedReplicateSetup(master_ip, myself_ip, db_path, True)

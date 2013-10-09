@@ -499,7 +499,7 @@ class GanetiContext(object):
     self.rpc = rpc.RpcRunner(self.cfg, self.glm.AddToLockMonitor)
 
     # Job queue
-    self.jobqueue = jqueue.GetJobQueue("disk", context=self)
+    self.jobqueue = jqueue.GetJobQueue(self.backend_storage, context=self)
 
     # setting this also locks the class against attribute modifications
     self.__class__._instance = self

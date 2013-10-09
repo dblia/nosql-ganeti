@@ -149,8 +149,9 @@ case_JobStatusPri_py_equiv = do
      runPython "import ganeti.jqueue as jqueue\n\
                \from ganeti import serializer\n\
                \import sys\n\
+               \_QueuedJob = jqueue.base._QueuedJob\n\
                \job_data = serializer.Load(sys.stdin.read())\n\
-               \decoded = [jqueue.base._QueuedJob.Restore(None, o, False, False)\n\
+               \decoded = [_QueuedJob.Restore(None, o, False, False)\n\
                \           for o in job_data]\n\
                \encoded = [(job.CalcStatus(), job.CalcPriority())\n\
                \           for job in decoded]\n\

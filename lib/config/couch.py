@@ -24,10 +24,13 @@
 """
 
 # pylint: disable=R0904
-# R0904: Too many public methods 
+# R0904: Too many public methods
 
 # pylint: disable=W0212
 # W0212: Access to a protected member of a client class
+
+# pylint: disable=W0221
+# W0221: Arguments number differs from overridden method
 
 import os
 import random
@@ -662,7 +665,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
         self._WriteConfig(db_name=self._nodegroups_db, data=data)
         group._rev = data['_rev']
         modified = True
-      # FIXME: check how this works
       if node_updated:
         data = objects.Node.ToDict(node)
         self._WriteConfig(db_name=self._nodes_db, data=data)
@@ -890,48 +892,48 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
   def _BuildConfigData(self):
     """This function builds the config.data from it's components, because we
     don't want to change it's memory represantation.
-  
+
     @rtype: L{couchdb.client.Document}
     @return: The config.data with it's separated components in one object
-  
+
     """
     # Get config.data from the db
     raw_data = self._cfg_db.get("config.data")
-  
+
     # nodes
     nodes = {}
     view_nodes = self._nodes_db.view('_all_docs', include_docs=True)
     for row in view_nodes.rows:
       node = row['doc']
       nodes[node['name']] = node
-  
+
     # instances
     instances = {}
     view_insts = self._instances_db.view('_all_docs', include_docs=True)
     for row in view_insts.rows:
       instance = row['doc']
       instances[instance['name']] = instance
-  
+
     # nodegroups
     nodegroups = {}
     view_groups = self._nodegroups_db.view('_all_docs', include_docs=True)
     for row in view_groups.rows:
       nodegroup = row['doc']
       nodegroups[nodegroup['uuid']] = nodegroup
-  
+
     # networks
     networks = {}
     view_networks = self._networks_db.view('_all_docs', include_docs=True)
     for row in view_networks.rows:
       network = row['doc']
       networks[network['uuid']] = network
-  
+
     # build the config.data object
     raw_data['nodegroups'] = nodegroups
     raw_data['nodes'] = nodes
     raw_data['instances'] = instances
     raw_data['networks'] = networks
-  
+
     return raw_data
 
 

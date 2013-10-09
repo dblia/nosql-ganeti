@@ -23,6 +23,9 @@
 
 """
 
+# pylint: disable=W0703
+# W0703: Catching too general exception Exception
+
 import os
 import os.path
 import re
@@ -690,8 +693,7 @@ def InitConfig(version, cluster_config, master_node_config,
       }
     nodegroups = {
       def_nodegroup.uuid: def_nodegroup,
-      }
-
+     }
     config_data.nodegroups = nodegroups
     config_data.nodes = nodes
 
@@ -900,7 +902,12 @@ def MasterFailover(no_voting=False):
     master_reachable = True
 
     try:
-      utils.GetDBInstance(constants.CLUSTER_DB, master_ip, port)
+      jqueue = utils.GetDBInstance(constants.QUEUE_DB, master_ip, port)
+      jarchive = utils.GetDBInstance(constants.ARCHIVE_DB, master_ip, port)
+      jstore_cl = jstore.GetJStore("couchdb", queue=jqueue, archive=jarchive)
+      if jstore_cl.CheckDrainFlag():
+        logging.info("Undraining job queue")
+        jstore_cl.SetDrainFlag(False, None)
     except Exception:
       master_reachable = False
 
@@ -909,6 +916,10 @@ def MasterFailover(no_voting=False):
       # tasks from old master to the new one
       old_master_ip = netutils.Hostname.GetIP(old_master)
       new_master_ip = netutils.Hostname.GetIP(new_master)
+      jq_db = "".join(("/", constants.QUEUE_DB, "/"))
+      arch_db = "".join(("/", constants.ARCHIVE_DB, "/"))
+      utils.MasterFailoverDbs(old_master_ip, new_master_ip, jq_db)
+      utils.MasterFailoverDbs(old_master_ip, new_master_ip, arch_db)
       for db_name in constants.CONFIG_DATA_DBS:
         db_path = "".join(("/", db_name, "/"))
         utils.MasterFailoverDbs(old_master_ip, new_master_ip, db_path)
@@ -926,6 +937,10 @@ def MasterFailover(no_voting=False):
         mcs_ips.remove(new_master_ip)
 
       for mc_ip in mcs_ips:
+        jq_db = "".join(("/", constants.QUEUE_DB, "/"))
+        arch_db = "".join(("/", constants.ARCHIVE_DB, "/"))
+        utils.UnlockedReplicateSetup(new_master_ip, mc_ip, jq_db, False)
+        utils.UnlockedReplicateSetup(new_master_ip, mc_ip, arch_db, False)
         for db_name in constants.CONFIG_DATA_DBS:
           db_path = "".join(("/", db_name, "/"))
           utils.UnlockedReplicateSetup(new_master_ip, mc_ip, db_path, False)
@@ -942,12 +957,12 @@ def MasterFailover(no_voting=False):
                     " continuing but activating the master on the current"
                     " node will probably fail", total_timeout)
 
-  jstore_cl = jstore.GetJStore("disk")
-  if jstore_cl.CheckDrainFlag():
-    logging.info("Undraining job queue")
-    jstore_cl.SetDrainFlag(False)
-
-  if backend_storage == "couchdb":
+  if backend_storage == "disk":
+    jstore_cl = jstore.GetJStore("disk")
+    if jstore_cl.CheckDrainFlag():
+      logging.info("Undraining job queue")
+      jstore_cl.SetDrainFlag(False)
+  elif backend_storage == "couchdb":
     _FailoverCouchDbBackendStorage()
 
   logging.info("Starting the master daemons on the new master")
