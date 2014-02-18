@@ -19,10 +19,7 @@
 # 02110-1301, USA.
 
 
-"""Module implementing the job queue handling using disk as backend
-storage type.
-
-"""
+"""Default filesystem driver for the job queue handling"""
 
 # pylint: disable=W0212
 # W0212: Access to a protected member %s of a client class
@@ -54,15 +51,16 @@ from ganeti import ht
 from ganeti import pathutils
 from ganeti import vcluster
 
-from ganeti.jqueue import base
-
-# Function and constants needed from base file
-_LOCK = base._LOCK
-_QueuedJob = base._QueuedJob
-_RequireOpenQueue = base._RequireOpenQueue
-_JobQueueWorkerPool = base._JobQueueWorkerPool
-_JobDependencyManager = base._JobDependencyManager
-_JobChangesChecker = base._JobChangesChecker
+from ganeti.jqueue.base import \
+    _BaseJobFileChangesWaiter, \
+    _BaseWaitForJobChangesHelper, \
+    _BaseJobQueue, \
+    _RequireOpenQueue, \
+    _JobDependencyManager, \
+    _JobQueueWorkerPool, \
+    _JobChangesChecker, \
+    _QueuedJob, \
+    _LOCK
 
 
 def _CallJqUpdate(runner, names, file_name, content):
@@ -73,7 +71,7 @@ def _CallJqUpdate(runner, names, file_name, content):
   return runner.call_jobqueue_update(names, virt_file_name, content)
 
 
-class _DiskJobFileChangesWaiter(base._BaseJobFileChangesWaiter):
+class _DiskJobFileChangesWaiter(_BaseJobFileChangesWaiter):
   def __init__(self, filename, _inotify_wm_cls=pyinotify.WatchManager):
     """Initializes this class.
 
@@ -82,6 +80,7 @@ class _DiskJobFileChangesWaiter(base._BaseJobFileChangesWaiter):
     @raises errors.InotifyError: if the notifier cannot be setup
 
     """
+    super(_DiskJobFileChangesWaiter, self).__init__()
     self._wm = _inotify_wm_cls()
     self._inotify_handler = \
       asyncnotifier.SingleFileEventHandler(self._wm, self._OnInotify, filename)
@@ -162,7 +161,7 @@ class _JobChangesWaiter(object):
       self._filewaiter.Close()
 
 
-class _DiskWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
+class _DiskWaitForJobChangesHelper(_BaseWaitForJobChangesHelper):
   """Helper class using inotify to wait for changes in a job file.
 
   This class takes a previous job status and serial, and alerts the client when
@@ -222,7 +221,7 @@ class _DiskWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
       return constants.JOB_NOTCHANGED
 
 
-class DiskJobQueue(base.BaseJobQueue):
+class DiskJobQueue(_BaseJobQueue):
   """Queue used to manage the jobs.
 
   """

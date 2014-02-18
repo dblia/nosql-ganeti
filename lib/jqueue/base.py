@@ -19,7 +19,7 @@
 # 02110-1301, USA.
 
 
-"""Abstraction module implementing the job queue handling.
+"""Job queue management abstraction - base class and utility functions.
 
 Locking: there's a single, large lock in the L{JobQueue} class. It's
 used by all other classes in this module.
@@ -1500,7 +1500,7 @@ def _RequireNonDrainedQueue(fn):
   return wrapper
 
 
-class BaseJobQueue(object):
+class _BaseJobQueue(object):
   """Queue used to manage the jobs.
 
   """
@@ -1533,6 +1533,12 @@ class BaseJobQueue(object):
 
     # Accept jobs by default
     self._accepting_jobs = True
+
+    # Variables that will be inherited and initialized be each sub-class.
+    self._nodes = None
+    self._queue_size = None
+    self._wpool = None
+    self._queue_filelock = None
 
   def _InspectQueue(self):
     """Loads the whole job queue and resumes unfinished jobs.

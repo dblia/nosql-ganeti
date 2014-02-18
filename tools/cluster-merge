@@ -373,9 +373,11 @@ class Merger(object):
     my_config = config.GetConfigWriter("disk", offline=True)
     fake_ec_id = 0 # Needs to be uniq over the whole config merge
 
+    # pylint: disable=E1121
+    # E1121: Too many positional arguments for function call
     for data in self.merger_data:
-      other_config = config.GetConfigWriter("disk", data.config_path,
-                                            accept_foreign=True)
+      other_config = \
+           config.GetConfigWriter("disk", data.config_path, accept_foreign=True)
       self._MergeClusterConfigs(my_config, other_config)
       self._MergeNodeGroups(my_config, other_config)
 

@@ -205,32 +205,32 @@ CONFIG_DATA_DBS = compat.UniqueFrozenset([
   ])
 
 # Default view and filter documents for queue and archive databases
-QUEUE_VIEW = \
-  { "_id" : "_design/queue_view", \
-    "language" : "javascript", \
-    "views" : { \
-      "jobs" : { \
-        "map" : \
-          "function (doc) { \
-            var q; q = doc._id.indexOf('_'); \
-            if ((doc._id != 'serial') && (doc._id != 'version') && (q != 0)) { \
-              emit(doc._id, doc) \
-           }}" \
-       } \
-     } \
-   }
-
-QUEUE_FILTER = \
-  { "_id" : "_design/filter", \
-    "language" : "javascript", \
-    "filters" : { \
-      "job_id" : \
-        "function (doc, req) { \
-          if (doc._id == req.query.id) \
-          { return true; } \
-          else { return false; }}" \
-    } \
+QUEUE_VIEW = {
+  "_id": "_design/queue_view",
+  "language": "javascript",
+  "views": {
+    "jobs": {
+      "map":
+        "function (doc) { \
+          var q; q = doc._id.indexOf('_'); \
+          if ((doc._id != 'serial') && (doc._id != 'version') && (q != 0)) { \
+            emit(doc._id, doc) \
+          }}"
+    }
   }
+}
+
+QUEUE_FILTER = {
+  "_id": "_design/filter",
+  "language": "javascript",
+  "filters": {
+    "job_id":
+      "function (doc, req) { \
+        if (doc._id == req.query.id) \
+        { return true; } \
+        else { return false; }}"
+  }
+}
 
 DAEMONS_LOGBASE = {
   NODED: "node-daemon",

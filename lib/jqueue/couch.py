@@ -19,9 +19,7 @@
 # 02110-1301, USA.
 
 
-"""Module implementing the job queue handling usign CouchDB as storage type.
-
-"""
+"""CouchDB driver for the job queue handling"""
 
 # pylint: disable=W0212
 # W0212: Access to a protected member %s of a client class
@@ -55,18 +53,19 @@ from ganeti import netutils
 from ganeti import compat
 from ganeti import ht
 
-from ganeti.jqueue import base
+from ganeti.jqueue.base import \
+    _BaseJobFileChangesWaiter, \
+    _BaseWaitForJobChangesHelper, \
+    _BaseJobQueue, \
+    _RequireOpenQueue, \
+    _JobDependencyManager, \
+    _JobQueueWorkerPool, \
+    _JobChangesChecker, \
+    _QueuedJob, \
+    _LOCK
 
-# Functions and constants needed from base file
-_LOCK = base._LOCK
-_RequireOpenQueue = base._RequireOpenQueue
-_JobDependencyManager = base._JobDependencyManager
-_JobQueueWorkerPool = base._JobQueueWorkerPool
-_QueuedJob = base._QueuedJob
-_JobChangesChecker = base._JobChangesChecker
 
-
-class _CouchDBJobFileChangesWaiter(base._BaseJobFileChangesWaiter):
+class _CouchDBJobFileChangesWaiter(_BaseJobFileChangesWaiter):
   def __init__(self, db_name, job_id, since=None):
     """Initializes this class.
 
@@ -75,53 +74,54 @@ class _CouchDBJobFileChangesWaiter(base._BaseJobFileChangesWaiter):
     @type job_id: int
     @param job_id: Job id to poll for changes
     @type since: int
-    @param since: Start the results from the change immediately after the given
+    @param since: Search for changes immediately after the given
                   sequence number.
 
     """
+    super(_CouchDBJobFileChangesWaiter, self).__init__()
     self.db_name = db_name
     self.job_id = str(job_id)
     if since:
       self.since = since
     else:
-      self.since = self.db_name.changes()['last_seq']
+      self.since = self.db_name.changes()["last_seq"]
 
   def Wait(self, timeout):
     """Waits for the job to change.
 
     @type timeout: float
     @param timeout: Timeout in seconds
-    @return: Tuple of ('Polling', result) format.
-             If timeout expires result is False, otherwise a new _QueuedJob
-             object with the new data returned. 'Polling' used to distinguish
-             this case in utils.Retry function.
+    @rtype: tuple of '("Polling", result)' format.
+    @return: Whether have bee events. If timeout expires result is False,
+             otherwise a new _QueuedJob object with the new data is returned.
+             "Polling" used to distinguish this case in utils.Retry function.
 
     """
     assert timeout >= 0
     result = False
-    # Convert timeout to int, because changes's timeout option accepts int
-    # values only and increase it by one for rounding reasons.
+    # Convert timeout to int, because '_changes' feed timeout option accepts
+    # integer values only, and increase it by one for rounding reasons.
     timeout = int(timeout) + 1
-    have_events = self.db_name.changes(filter='filter/job_id', id=self.job_id,
-        feed='longpoll', include_docs=True, since=self.since,
-        timeout=timeout * 1000)
-    if have_events['results']:
+    have_events = self.db_name.changes(filter="filter/job_id", id=self.job_id,
+                                       feed="longpoll", include_docs=True,
+                                       since=self.since, timeout=timeout * 1000)
+    if have_events["results"]:
       try:
-        data = have_events['results'][0]['doc']
-        raw = json.loads(data['info'])
+        data = have_events["results"][0]["doc"]
+        raw = json.loads(data["info"])
         result = _QueuedJob.Restore(self, raw, writable=False, archived=None)
-      # FIXME: improve error handling for that case
+      # FIXME: Improve error handling for that case
       except Exception, err:
         raise errors.JobFileCorrupted(err)
 
-    self.since = have_events['last_seq']
+    self.since = have_events["last_seq"]
 
-    return ('Polling', result)
+    return ("Polling", result)
 
 
-class _CouchDBWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
-  """Helper class using _changes database resource to wait for changes in a job
-  document.
+class _CouchDBWaitForJobChangesHelper(_BaseWaitForJobChangesHelper):
+  """Helper class using CouchDB's _changes feed to wait for changes in
+  a job document.
 
   This class takes a previous job status and serial, and alerts the client when
   the current job status has changed.
@@ -130,9 +130,9 @@ class _CouchDBWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
   @staticmethod
   def _CheckForChanges(counter, check_fn, job):
     if counter.next() > 0:
-      # If this isn't the first check the job is given some more time to change
-      # again. This gives better performance for jobs generating many
-      # changes/messages.
+      # If this isn't the first check the job is given some more time to
+      # change again. This gives better performance for jobs generating
+      # many changes/messages.
       time.sleep(0.1)
 
     if not job:
@@ -176,7 +176,7 @@ class _CouchDBWaitForJobChangesHelper(base._BaseWaitForJobChangesHelper):
       return constants.JOB_NOTCHANGED
 
 
-class CouchDBJobQueue(base.BaseJobQueue):
+class CouchDBJobQueue(_BaseJobQueue):
   """Queue used to manage the jobs.
 
   """
@@ -205,7 +205,7 @@ class CouchDBJobQueue(base.BaseJobQueue):
     # This ensures no other process is working on the job queue.
     self._jstore = jstore.GetJStore("couchdb", queue=self._queue_db,
                                     archive=self._archive)
-    self._queue_filelock =  self._jstore.InitAndVerifyQueue(must_lock=True)
+    self._queue_filelock = self._jstore.InitAndVerifyQueue(must_lock=True)
 
     # Read serial file
     (self._last_serial, self._serial_doc_rev) = self._jstore.ReadSerial()
@@ -266,15 +266,10 @@ class CouchDBJobQueue(base.BaseJobQueue):
                      idx, jobs_count - 1, 100.0 * (idx + 1) / jobs_count)
         lastinfo = time.time()
 
-      data = json.loads(jdoc['info'])
-      # job = self._LoadJobUnlocked(job_id) will cause writable and archived
-      # variables to be set to True and None respectively.
       try:
+        data = json.loads(jdoc["info"])
         job = _QueuedJob.Restore(self, data, True, None)
-#        job = _QueuedJob.Restore(jdoc['_id'], data, writable=True,
-#                                 archived=None)
-#        job = self._LoadJobUnlocked(jdoc['_id'])
-      # a failure in job Restore can cause an exception here
+      # a failure in loading the job can cause an exception here.
       except Exception:
         continue
 
@@ -289,7 +284,7 @@ class CouchDBJobQueue(base.BaseJobQueue):
         logging.warning("Unfinished job %s, %s found: %s", job.id, job.rev, job)
 
         if status == constants.JOB_STATUS_WAITING:
-          # Restart job
+          # Restart job.
           job.MarkUnfinishedOps(constants.OP_STATUS_QUEUED, None)
           restartjobs.append(job)
         else:
@@ -304,7 +299,6 @@ class CouchDBJobQueue(base.BaseJobQueue):
       self._EnqueueJobsUnlocked(restartjobs)
 
     logging.info("Job queue inspection finished")
-
 
   @locking.ssynchronized(_LOCK)
   @_RequireOpenQueue
@@ -324,15 +318,12 @@ class CouchDBJobQueue(base.BaseJobQueue):
       # and skip the replication of the job ids
       return
     else:
-      jq_path = "".join(("/", constants.QUEUE_DB, "/"))
-      arch_path = "".join(("/", constants.ARCHIVE_DB, "/"))
-      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, jq_path,
-                                   False)
-      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, arch_path,
-                                   False)
+      queue = "".join(("/", constants.QUEUE_DB, "/"))
+      arch = "".join(("/", constants.ARCHIVE_DB, "/"))
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, queue, False)
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, arch, False)
 
     self._nodes[node_name] = node.primary_ip
-
 
   @locking.ssynchronized(_LOCK)
   @_RequireOpenQueue
@@ -346,41 +337,35 @@ class CouchDBJobQueue(base.BaseJobQueue):
     self._nodes.pop(node.name, None)
 
     if node.master_candidate:
-      jq_path = "".join(("/", constants.QUEUE_DB, "/"))
-      arch_path = "".join(("/", constants.ARCHIVE_DB, "/"))
-      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, jq_path, True)
-      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, arch_path,
-                                   True)
-
+      queue = "".join(("/", constants.QUEUE_DB, "/"))
+      archive = "".join(("/", constants.ARCHIVE_DB, "/"))
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, queue, True)
+      utils.UnlockedReplicateSetup(self._hostip, node.primary_ip, archive, True)
 
   def _UpdateJobQueueFile(self, data, job):
     """Writes a file in local db and then auto replicate it to all nodes.
 
     This function will replace the contents of a file on the local node
     and then couchdb server will automatic replicate it to all the other
-    nodes we have.
+    candidate nodes of the cluster.
 
     @type data: str
     @param data: the new contents of the file
-    @type replicate: boolean
-    @param replicate: whether to spread the changes to the remote nodes
     @type job: L{_QueuedJob}
     @param job: the job to be updated
 
     """
-    if job.rev == None:
-      doc = { '_id' : str(job.id), 'info' : data }
-      job.rev = utils.WriteDocument(self._queue_db, doc)
-    else:
-      doc = { '_id' : str(job.id), '_rev': job.rev, 'info' : data }
-      job.rev = utils.WriteDocument(self._queue_db, doc)
+    doc = {"_id": str(job.id), "info": data}
+    if job.rev:
+      doc["_rev"] = job.rev
 
+    job.rev = utils.WriteDocument(self._queue_db, doc)
 
   def _RenameFilesUnlocked(self, arch_jobs, del_jobs):
     """Rename a job list from queue to archive db.
 
-    This function will delete the del_jobs given from jqueue db and
-    then will save arch_jobs to the archive db
+    This function will bulk delete the del_jobs given from jqueue db and
+    then will bulk update arch_jobs to the archive db
 
     @type arch_jobs: list of job documents
     @param arch_jobs: List containing jobs to be archived
@@ -390,13 +375,13 @@ class CouchDBJobQueue(base.BaseJobQueue):
     """
     try:
       self._queue_db.update(del_jobs)
-      # FIXME: handle conflicts when updating a job that exists
-      # in the archive dir
+      # FIXME: Handle conflicts when updating a job that exists
+      # in the Archive dir.
       self._archive.update(arch_jobs)
-    # FIXME: improve error handling for that case
+    # FIXME: improve error handling for that case.
     except Exception, err:
-      raise errors.JobQueueError("_RenameFilesUnlocked: ", err)
-
+      raise errors.JobQueueError("Error while renaming a job file from queue to"
+                                 " archive db: ", err)
 
   def _NewSerialsUnlocked(self, count):
     """Generates a new job identifier.
@@ -415,7 +400,7 @@ class CouchDBJobQueue(base.BaseJobQueue):
     serial = self._last_serial + count
 
     # Write to database
-    data = { '_id' : 'serial', '_rev' : self._serial_doc_rev, 'value' : serial }
+    data = {"_id": "serial", "_rev": self._serial_doc_rev, "value": serial}
     self._serial_doc_rev = utils.WriteDocument(self._queue_db, data)
 
     result = [jstore.FormatJobID(v)
@@ -428,30 +413,29 @@ class CouchDBJobQueue(base.BaseJobQueue):
 
     return result
 
-
   def _GetJobIDsUnlocked(self, archived=False):
     """Return all known job IDs.
 
-    The method only looks at database because it's a requirement that all
-    jobs are present on database (so in the _memcache we don't have any
-    extra IDs).
+    The method only looks at the queue database because it's a requirement
+    that all jobs are present on database (so in the _memcache we don't
+    have any extra IDs).
 
     @rtype: list of L{couchdb.client.Document}
     @return: the list of job IDs
 
     """
-    jlist = []
+    job_ids = []
 
     if archived:
-      arch_view_res = self._archive.view('queue_view/jobs')
+      arch_view_res = self._archive.view("queue_view/jobs")
       for row in arch_view_res.rows:
-        jlist.append(int(row['id']))
+        job_ids.append(int(row["id"]))
 
-    view_res = self._queue_db.view('queue_view/jobs')
+    view_res = self._queue_db.view("queue_view/jobs")
     for row in view_res.rows:
-      jlist.append(int(row['id']))
+      job_ids.append(int(row["id"]))
 
-    return jlist
+    return job_ids
 
   def _GetJobsUnlocked(self, archived=False):
     """Return all known jobs.
@@ -463,21 +447,19 @@ class CouchDBJobQueue(base.BaseJobQueue):
     @return: the list of job documents
 
     """
-    jlist = []
+    job_ids = []
 
     if archived:
-      arch_view_res = self._archive.view('queue_view/jobs', include_docs=True)
+      arch_view_res = self._archive.view("queue_view/jobs", include_docs=True)
       for row in arch_view_res.rows:
-        jlist.append(row['doc'])
+        job_ids.append(row["doc"])
 
-    view_res = self._queue_db.view('queue_view/jobs', include_docs=True)
+    view_res = self._queue_db.view("queue_view/jobs", include_docs=True)
     for row in view_res.rows:
-      jlist.append(row['doc'])
+      job_ids.append(row["doc"])
 
-    return jlist
+    return job_ids
 
-
-  # FIXME: write that function cleaner
   def _LoadJobUnlocked(self, job_id):
     """Loads a job from the database or memory.
 
@@ -492,7 +474,6 @@ class CouchDBJobQueue(base.BaseJobQueue):
 
     """
     job = self._memcache.get(job_id, None)
-
     if job:
       logging.debug("Found job %s in memcache", job_id)
       assert job.writable, "Found read-only job in memcache"
@@ -503,16 +484,16 @@ class CouchDBJobQueue(base.BaseJobQueue):
       if job is None:
         return job
     except errors.JobFileCorrupted:
-      job = self._LoadJobFromDisk(job_id, True)
-      if job is None:
+      new_job = self._LoadJobFromDisk(job_id, True)
+      if new_job is None:
         # job already archived (future case)
         logging.exception("Can't parse job %s", job_id)
       else:
         # non-archived case
         logging.exception("Can't parse job %s, will archive.", job_id)
-        # FIXME: handle this case
-        # self._RenameFilesUnlocked([job.id])
-        raise errors.JobQueueError("_LoadJobUnlocked: ", err)
+        old_job = copy.deepcopy(job)
+        old_job["_deleted"] = True
+        self._RenameFilesUnlocked([job], [old_job])
       return None
 
     assert job.writable, "Job just loaded is not writable"
@@ -536,19 +517,19 @@ class CouchDBJobQueue(base.BaseJobQueue):
     """
     db_names = [self._queue_db]
 
-    raw_data = None
-    archived = None
-
     if try_archived:
       db_names.append(self._archive)
+
+    raw_data = None
+    archived = None
 
     for db in db_names:
       try:
         doc = db.get(str(job_id))
-        raw_data = doc['info']
+        raw_data = doc["info"]
       except TypeError, err:
-        msg = ("The job with id: %s, haven't found on db: %s. %s"  % (job_id,
-               self._queue_db, errors.ECODE_NOENT))
+        msg = ("The job with id '%s', haven't found on db '%s'. %s" %
+               (job_id, self._queue_db, errors.ECODE_NOENT))
         raise errors.OpPrereqError(msg)
       else:
         break
@@ -571,8 +552,8 @@ class CouchDBJobQueue(base.BaseJobQueue):
     """Update the queue size.
 
     """
-    # The queue size is the length of the queue database minus the serial,
-    # version, filter and queue_view documents.
+    # The queue size is the length of the queue database minus the
+    # serial, version, filter and queue_view documents.
     self._queue_size = len(self._queue_db) - 4
 
   @locking.ssynchronized(_LOCK)
@@ -659,12 +640,13 @@ class CouchDBJobQueue(base.BaseJobQueue):
     archive_jobs = []
     deleted_jobs = []
     for arch_job, del_job in job_list:
-      # XXX: Because this function called from ArchiveJob and AutoArchiveJobs
-      # only, the writable and archived fields are always True and None, due to
-      # _LoadJobUnlocked(job_id) call which produces that result, so i remove
-      # them to improve job archive speed. Leave it as it is for now
-      data = json.loads(arch_job['info'])
+      # This function is called from 'ArchiveJob' and 'AutoArchiveJobs'
+      # only. The 'writable' and 'archived' fields can only be True and None
+      # repsectively due to the call to the '_LoadJobUnlocked(job_id)' method
+      # that produces those values.
+      data = json.loads(arch_job["info"])
       job = _QueuedJob.Restore(self, data, True, None)
+      # The assert checks will always be true due to the call made above.
       assert job.writable, "Can't archive read-only job"
       assert not job.archived, "Can't cancel archived job"
 
@@ -672,8 +654,8 @@ class CouchDBJobQueue(base.BaseJobQueue):
         logging.debug("Job %s is not yet done", job.id)
         continue
 
-      arch_job['archive_index'] = jstore.GetArchiveDirectory(arch_job['_id'])
-      del_job['_deleted'] = True
+      arch_job["archive_index"] = jstore.GetArchiveDirectory(arch_job["_id"])
+      del_job["_deleted"] = True
       archive_jobs.append(arch_job)
       deleted_jobs.append(del_job)
 
@@ -681,7 +663,7 @@ class CouchDBJobQueue(base.BaseJobQueue):
     self._RenameFilesUnlocked(archive_jobs, deleted_jobs)
 
     logging.debug("Successfully archived job(s) %s",
-                  utils.CommaJoin(job['_id'] for job in archive_jobs))
+                  utils.CommaJoin(job["_id"] for job in archive_jobs))
 
     # Since we haven't quite checked, above, if we succeeded or failed renaming
     # the files, we update the cached queue size from the filesystem. When we
@@ -705,7 +687,6 @@ class CouchDBJobQueue(base.BaseJobQueue):
     """
     logging.info("Archiving job %s", job_id)
 
-    # job = self._LoadJobUnlocked(job_id)
     job = self._queue_db.get(str(job_id))
     if not job:
       logging.debug("Job %s not found", job_id)
@@ -722,7 +703,7 @@ class CouchDBJobQueue(base.BaseJobQueue):
 
     The method will archive all jobs which are older than the age
     parameter. For jobs that don't have an end timestamp, the start
-    timestamp will be considered. The special '-1' age will cause
+    timestamp will be considered. The special "-1" age will cause
     archival of all jobs (that are not running or queued).
 
     @type age: int
@@ -736,7 +717,7 @@ class CouchDBJobQueue(base.BaseJobQueue):
     archived_count = 0
     last_touched = 0
 
-    all_jobs = self._GetJobsUnlocked(archived=True)
+    all_jobs = self._GetJobsUnlocked()
     pending = []
     for idx, jdoc in enumerate(all_jobs):
       last_touched = idx + 1
@@ -748,8 +729,7 @@ class CouchDBJobQueue(base.BaseJobQueue):
         break
 
       # Returns None if the job failed to load
-      data = json.loads(jdoc['info'])
-#      job = _QueuedJob.Restore(jdoc['_id'], data, writable=True, archived=None)
+      data = json.loads(jdoc["info"])
       job = _QueuedJob.Restore(self, data, True, None)
       if job:
         if job.end_timestamp is None:

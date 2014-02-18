@@ -183,13 +183,13 @@ def Retry(fn, delay, timeout, args=None, wait_fn=time.sleep,
       if current_delay > 0.0:
         wait_res = wait_fn(current_delay)
 
-    # This part of code has been modified for _CouchDBJobFileChangesHelper
-    # class, in order to identify the case when a new _QueuedJob object
-    # should be passed to the new fn() call as argument.
-    # It doesn't affect the rest behaviour of Retry method.
+    # This part of code has been modified for the _CouchDBJobFileChangesHelper
+    # needs, in order to identify the case when a new _QueuedJob object should
+    # be passed to the new fn() call as argument.
+    # It does not affects the rest behaviour of Retry method.
     try:
       (poll, result) = wait_res
-      if (poll == 'Polling') and (result != False):
+      if poll == 'Polling' and result:
         args = [result]
     except (ValueError, TypeError, NameError):
       pass

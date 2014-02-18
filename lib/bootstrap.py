@@ -693,7 +693,7 @@ def InitConfig(version, cluster_config, master_node_config,
       }
     nodegroups = {
       def_nodegroup.uuid: def_nodegroup,
-     }
+      }
     config_data.nodegroups = nodegroups
     config_data.nodes = nodes
 

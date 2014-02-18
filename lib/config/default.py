@@ -19,9 +19,7 @@
 # 02110-1301, USA.
 
 
-"""Default ganeti disk driver for configuration managment.
-
-"""
+"""Default filesystem driver for the configuration management"""
 
 # pylint: disable=R0904
 # R0904: Too many public methods
@@ -48,17 +46,15 @@ from ganeti import serializer
 from ganeti import runtime
 from ganeti import pathutils
 
-from ganeti.config import base
+from ganeti.config.base import \
+    _BaseConfigWriter, \
+    _ValidateConfig, \
+    _UPGRADE_CONFIG_JID, \
+    _config_lock
 
 
-# Functions and contants needed from base file
-_config_lock = base._config_lock
-_UPGRADE_CONFIG_JID = base._UPGRADE_CONFIG_JID
-_ValidateConfig = base._ValidateConfig
-
-
-class DiskConfigWriter(base._BaseConfigWriter):
-  """Disk storage configuration type
+class DiskConfigWriter(_BaseConfigWriter):
+  """Disk storage configuration type.
 
   """
   def __init__(self, cfg_file=None, offline=False, _getents=runtime.GetEnts,
@@ -116,35 +112,6 @@ class DiskConfigWriter(base._BaseConfigWriter):
     """
     self._UnlockedAddNodeGroup(group, ec_id, check_uuid)
     self._WriteConfig()
-
-  def _UnlockedAddNodeGroup(self, group, ec_id, check_uuid):
-    """Add a node group to the configuration.
-
-    """
-    logging.info("Adding node group %s to configuration", group.name)
-
-    # Some code might need to add a node group with a pre-populated UUID
-    # generated with ConfigWriter.GenerateUniqueID(). We allow them to bypass
-    # the "does this UUID" exist already check.
-    if check_uuid:
-      self._EnsureUUID(group, ec_id)
-
-    try:
-      existing_uuid = self._UnlockedLookupNodeGroup(group.name)
-    except errors.OpPrereqError:
-      pass
-    else:
-      raise errors.OpPrereqError("Desired group name '%s' already exists as a"
-                                 " node group (UUID: %s)" %
-                                 (group.name, existing_uuid),
-                                 errors.ECODE_EXISTS)
-
-    group.serial_no = 1
-    group.ctime = group.mtime = time.time()
-    group.UpgradeConfig()
-
-    self._config_data.nodegroups[group.uuid] = group
-    self._config_data.cluster.serial_no += 1
 
   @locking.ssynchronized(_config_lock)
   def RemoveNodeGroup(self, group_uuid):
@@ -340,34 +307,6 @@ class DiskConfigWriter(base._BaseConfigWriter):
         self._WriteConfig()
 
     return mod_list
-
-  def _UnlockedAddNodeToGroup(self, node_name, nodegroup_uuid):
-    """Add a given node to the specified group.
-
-    """
-    if nodegroup_uuid not in self._config_data.nodegroups:
-      # This can happen if a node group gets deleted between its lookup and
-      # when we're adding the first node to it, since we don't keep a lock in
-      # the meantime. It's ok though, as we'll fail cleanly if the node group
-      # is not found anymore.
-      raise errors.OpExecError("Unknown node group: %s" % nodegroup_uuid)
-    if node_name not in self._config_data.nodegroups[nodegroup_uuid].members:
-      self._config_data.nodegroups[nodegroup_uuid].members.append(node_name)
-
-  def _UnlockedRemoveNodeFromGroup(self, node):
-    """Remove a given node from its group.
-
-    """
-    nodegroup = node.group
-    if nodegroup not in self._config_data.nodegroups:
-      logging.warning("Warning: node '%s' has unknown node group '%s'"
-                      " (while being removed from it)", node.name, nodegroup)
-    nodegroup_obj = self._config_data.nodegroups[nodegroup]
-    if node.name not in nodegroup_obj.members:
-      logging.warning("Warning: node '%s' not a member of its node group '%s'"
-                      " (while being removed from it)", node.name, nodegroup)
-    else:
-      nodegroup_obj.members.remove(node.name)
 
   @locking.ssynchronized(_config_lock)
   def AssignGroupNodes(self, mods):

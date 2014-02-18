@@ -89,6 +89,8 @@ def _PrepareQueueLock():
     try:
       jqueue = utils.CreateDB(constants.QUEUE_DB, hostip, port)
       jarchive = utils.CreateDB(constants.ARCHIVE_DB, hostip, port)
+    # pylint: disable=W0703
+    # W0703:  Catching too general exception
     except Exception:
       jqueue = utils.GetDBInstance(constants.QUEUE_DB, hostip, port)
       jarchive = utils.GetDBInstance(constants.ARCHIVE_DB, hostip, port)

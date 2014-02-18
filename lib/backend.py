@@ -251,8 +251,11 @@ def JobQueuePurge():
   _CleanDirectory(pathutils.JOB_QUEUE_ARCHIVE_DIR)
 
 
-def CouchDBsPurge():
+def CouchDBPurge(candidate_nodes):
   """Removes job queue, archived and config.data related databases.
+
+  @type candidate_nodes: list of strings
+  @param candidate_nodes: A list containing the master candidate names.
 
   """
   my_hostname = netutils.Hostname.GetSysName()
@@ -262,11 +265,12 @@ def CouchDBsPurge():
   try:
     utils.DeleteDB(constants.QUEUE_DB, my_hostip, port)
     utils.DeleteDB(constants.ARCHIVE_DB, my_hostip, port)
-    utils.DeleteDB(constants.CLUSTER_DB, my_hostip, port)
-    utils.DeleteDB(constants.INSTANCES_DB, my_hostip, port)
-    utils.DeleteDB(constants.NODES_DB, my_hostip, port)
-    utils.DeleteDB(constants.NODEGROUPS_DB, my_hostip, port)
-    utils.DeleteDB(constants.NETWORKS_DB, my_hostip, port)
+    if my_hostname in candidate_nodes:
+      utils.DeleteDB(constants.CLUSTER_DB, my_hostip, port)
+      utils.DeleteDB(constants.INSTANCES_DB, my_hostip, port)
+      utils.DeleteDB(constants.NODES_DB, my_hostip, port)
+      utils.DeleteDB(constants.NODEGROUPS_DB, my_hostip, port)
+      utils.DeleteDB(constants.NETWORKS_DB, my_hostip, port)
   except Exception:
     raise errors.OpPrereqError("CouchDB error during cluster destroy in"
                                " CouchDBsPurge method: %s" % errors.ECODE_NOENT)
@@ -531,14 +535,16 @@ def LeaveCluster(modify_ssh_setup):
   @param modify_ssh_setup: boolean
 
   """
+  # Grub the appropriate values before clearing the DATA_DIR directory.
   backend_storage = _GetConfig().GetBackendStorageType()
+  candidate_nodes = _GetConfig().GetMasterCandidates()
+
   _CleanDirectory(pathutils.DATA_DIR)
   _CleanDirectory(pathutils.CRYPTO_KEYS_DIR)
-
   if backend_storage == "disk":
     JobQueuePurge()
   elif backend_storage == "couchdb":
-    CouchDBsPurge()
+    CouchDBPurge(candidate_nodes)
 
   if modify_ssh_setup:
     try:

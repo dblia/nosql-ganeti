@@ -44,6 +44,7 @@ from ganeti import objects
 
 import ganeti.config as config
 
+
 class ConfigShell(cmd.Cmd):
   """Command tool for editing the config file.
 

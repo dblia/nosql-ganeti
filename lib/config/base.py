@@ -19,9 +19,9 @@
 # 02110-1301, USA.
 
 
-"""Configuration managment abstraction - base class and utility functions
+"""Configuration management abstraction - base class and utility functions.
 
-This module provides the abstract interface to the Ganeti cluster configuration.
+This module provides the interface to the Ganeti cluster configuration.
 
 """
 
@@ -116,7 +116,7 @@ class TemporaryReservationManager:
 
 
 class _BaseConfigWriter(object):
-  """Base class for the configuration storage abstraction.
+  """Configuration storage abstract class.
 
   @ivar _temporary_lvs: reservation manager for temporary LVs
   @ivar _all_rms: a list of all temporary reservation managers
@@ -1133,7 +1133,30 @@ class _BaseConfigWriter(object):
     """Add a node group to the configuration.
 
     """
-    raise NotImplementedError()
+    logging.info("Adding node group %s to configuration", group.name)
+
+    # Some code might need to add a node group with a pre-populated UUID
+    # generated with ConfigWriter.GenerateUniqueID(). We allow them to bypass
+    # the "does this UUID" exist already check.
+    if check_uuid:
+      self._EnsureUUID(group, ec_id)
+
+    try:
+      existing_uuid = self._UnlockedLookupNodeGroup(group.name)
+    except errors.OpPrereqError:
+      pass
+    else:
+      raise errors.OpPrereqError("Desired group name '%s' already exists as a"
+                                 " node group (UUID: %s)" %
+                                 (group.name, existing_uuid),
+                                 errors.ECODE_EXISTS)
+
+    group.serial_no = 1
+    group.ctime = group.mtime = time.time()
+    group.UpgradeConfig()
+
+    self._config_data.nodegroups[group.uuid] = group
+    self._config_data.cluster.serial_no += 1
 
   def RemoveNodeGroup(self, group_uuid):
     """Remove a node group from the configuration.
@@ -1573,8 +1596,8 @@ class _BaseConfigWriter(object):
     """
     all_nodes = [self._UnlockedGetNodeInfo(node)
                  for node in self._UnlockedGetNodeList()]
-    return [node.name for node in all_nodes if not node.offline and
-        node.master_candidate]
+    return [node.name for node in all_nodes if not node.offline
+            and node.master_candidate]
 
   @locking.ssynchronized(_config_lock, shared=1)
   def GetMCNodeList(self):
@@ -1691,16 +1714,35 @@ class _BaseConfigWriter(object):
     raise NotImplementedError()
 
   def _UnlockedAddNodeToGroup(self, node_name, nodegroup_uuid):
-    """Add a given node to the specified group.
+    """Add a given node to the specified group and return True
+    if node successfully added to group.
 
     """
-    raise NotImplementedError()
+    if nodegroup_uuid not in self._config_data.nodegroups:
+      # This can happen if a node group gets deleted between its lookup and
+      # when we're adding the first node to it, since we don't keep a lock in
+      # the meantime. It's ok though, as we'll fail cleanly if the node group
+      # is not found anymore.
+      raise errors.OpExecError("Unknown node group: %s" % nodegroup_uuid)
+    if node_name not in self._config_data.nodegroups[nodegroup_uuid].members:
+      self._config_data.nodegroups[nodegroup_uuid].members.append(node_name)
 
   def _UnlockedRemoveNodeFromGroup(self, node):
-    """Remove a given node from its group.
+    """Remove a given node from its group and return True
+    if node successfully removed from group.
 
     """
-    raise NotImplementedError()
+    nodegroup = node.group
+    if nodegroup not in self._config_data.nodegroups:
+      logging.warning("Warning: node '%s' has unknown node group '%s'"
+                      " (while being removed from it)", node.name, nodegroup)
+      return False
+    nodegroup_obj = self._config_data.nodegroups[nodegroup]
+    if node.name not in nodegroup_obj.members:
+      logging.warning("Warning: node '%s' not a member of its node group '%s'"
+                      " (while being removed from it)", node.name, nodegroup)
+    else:
+      nodegroup_obj.members.remove(node.name)
 
   def AssignGroupNodes(self, mods):
     """Changes the group of a number of nodes.

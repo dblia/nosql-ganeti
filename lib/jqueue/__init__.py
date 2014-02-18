@@ -19,15 +19,14 @@
 # 02110-1301, USA.
 
 
-"""Abstraction module for job queue handling
+"""Job queue management abstraction package.
 
 """
 
 from ganeti import errors
 from ganeti import constants
 
-from ganeti.jqueue import default
-from ganeti.jqueue import couch
+from ganeti.jqueue import default, couch
 
 # Lookup table for configuration storage types
 _JOB_QUEUE_TYPES = {
@@ -35,8 +34,9 @@ _JOB_QUEUE_TYPES = {
   constants.JQ_COUCHDB: couch.CouchDBJobQueue
   }
 
+
 def GetJobQueueClass(name):
-  """Returns the class for a job queue storage type
+  """Returns the class for a job queue storage type.
 
   @type name: string
   @param name: Job queue storage type
@@ -50,10 +50,10 @@ def GetJobQueueClass(name):
 
 
 def GetJobQueue(name, **kargs):
-  """Factory function for job queue storage methods.
+  """Factory method for job queue storage engines.
 
   @type name: string
-  @param name: Job queue storage type
+  @param name: Job queue storage engine
 
   """
   return GetJobQueueClass(name)(**kargs)

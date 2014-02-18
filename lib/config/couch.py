@@ -19,9 +19,7 @@
 # 02110-1301, USA.
 
 
-"""CouchDB driver for configuration module.
-
-"""
+"""CouchDB driver for the configuration management"""
 
 # pylint: disable=R0904
 # R0904: Too many public methods
@@ -31,6 +29,15 @@
 
 # pylint: disable=W0221
 # W0221: Arguments number differs from overridden method
+
+# FIXME: Issue #1,
+# The _UpgradeConfig call at _OpenConfig method, does not flushes all the
+# changes to the databases because it would be timeconsuming due to the new
+# format of the configuration file. To be fixed.
+# FIXME: Issue #2,
+# The new configuration file format, causes two sequential database updates on
+# every config call. This corresponds to a change to the ACID property of every
+# config.data transaction that modifies the file. To be fixed.
 
 import os
 import random
@@ -45,22 +52,22 @@ from ganeti import constants
 from ganeti import objects
 from ganeti import netutils
 
-from ganeti.config import base
+from ganeti.config.base import \
+    _BaseConfigWriter, \
+    _ValidateConfig, \
+    _UPGRADE_CONFIG_JID, \
+    _config_lock
 
-# Methods and constants needed from base file
-_config_lock = base._config_lock
-_UPGRADE_CONFIG_JID = base._UPGRADE_CONFIG_JID
 
-
-class CouchDBConfigWriter(base._BaseConfigWriter):
-  """CouchDB storage configuration type
+class CouchDBConfigWriter(_BaseConfigWriter):
+  """CouchDB storage configuration type.
 
   """
   def __init__(self, offline=False, accept_foreign=False):
     super(CouchDBConfigWriter, self).__init__()
     self._offline = offline
     # CouchDB initialization
-    # Setup the connection with Couch Server for all databases
+    # Setup the connection with CouchDB Server for all databases
     self._hostip = netutils.Hostname.GetIP(self._my_hostname)
 
     ip = self._hostip
@@ -112,11 +119,12 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
                                         constants.LAST_DRBD_PORT)
       self._config_data.cluster.highest_used_port = port
 
-    # config_data: cluster (modify)
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
+
     return port
 
   @locking.ssynchronized(_config_lock)
@@ -130,45 +138,18 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
 
     """
     self._UnlockedAddNodeGroup(group, ec_id, check_uuid)
-    # nodegroups: add (group)
-    group._id = group.uuid
-    data = objects.NodeGroup.ToDict(group)
-    self._WriteConfig(db_name=self._nodegroups_db, data=data)
-    group._rev = data['_rev']
-    # config_data: cluster (serial_no update)
+
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
 
-  def _UnlockedAddNodeGroup(self, group, ec_id, check_uuid):
-    """Add a node group to the configuration.
-
-    """
-    logging.info("Adding node group %s to configuration", group.name)
-
-    # Some code might need to add a node group with a pre-populated UUID
-    # generated with ConfigWriter.GenerateUniqueID(). We allow them to bypass
-    # the "does this UUID" exist already check.
-    if check_uuid:
-      self._EnsureUUID(group, ec_id)
-
-    try:
-      existing_uuid = self._UnlockedLookupNodeGroup(group.name)
-    except errors.OpPrereqError:
-      pass
-    else:
-      raise errors.OpPrereqError("Desired group name '%s' already exists as a"
-                                 " node group (UUID: %s)" %
-                                 (group.name, existing_uuid),
-                                 errors.ECODE_EXISTS)
-
-    group.serial_no = 1
-    group.ctime = group.mtime = time.time()
-    group.UpgradeConfig()
-
-    self._config_data.nodegroups[group.uuid] = group
-    self._config_data.cluster.serial_no += 1
+    # Write the nodegroup object to the 'nodegroups' database.
+    group._id = group.uuid
+    data = objects.NodeGroup.ToDict(group)
+    self._WriteConfig(db_name=self._nodegroups_db, data=data)
+    group._rev = data["_rev"]
 
   @locking.ssynchronized(_config_lock)
   def RemoveNodeGroup(self, group_uuid):
@@ -188,13 +169,15 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     group = self._config_data.nodegroups[group_uuid]
     del self._config_data.nodegroups[group_uuid]
     self._config_data.cluster.serial_no += 1
-    # nodegroups: remove (_id : group_uuid)
-    self._nodegroups_db.delete(objects.NodeGroup.ToDict(group))
-    # config_data: cluster (serial_no update)
+
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
+
+    # Write the nodegroup object to the 'nodegroups' database.
+    self._nodegroups_db.delete(objects.NodeGroup.ToDict(group))
 
   @locking.ssynchronized(_config_lock)
   def AddInstance(self, instance, ec_id):
@@ -228,15 +211,17 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     self._config_data.cluster.serial_no += 1
     self._UnlockedReleaseDRBDMinors(instance.name)
     self._UnlockedCommitTemporaryIps(ec_id)
-    # instances: add (instance)
-    data = objects.Instance.ToDict(instance)
-    self._WriteConfig(db_name=self._instances_db, data=data)
-    instance._rev = data['_rev']
-    # config_data: cluster (serial_no update)
+
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
+
+    # Write the instance object to the 'instances' database.
+    data = objects.Instance.ToDict(instance)
+    self._WriteConfig(db_name=self._instances_db, data=data)
+    instance._rev = data["_rev"]
 
   def _SetInstanceStatus(self, instance_name, status):
     """Set the instance's status to a given value.
@@ -253,10 +238,17 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       instance.admin_state = status
       instance.serial_no += 1
       instance.mtime = time.time()
-      # instances: modify (instance)
+
+      # Write the cluster object to the 'config_data' database.
+      self._BumpSerialNo()
+      data = _ClusterObjectPrepare(self._config_data)
+      self._WriteConfig(db_name=self._cfg_db, data=data)
+      self._config_data._rev = data["_rev"]
+
+      # Write the instance object to the 'instances' database.
       data = objects.Instance.ToDict(instance)
       self._WriteConfig(db_name=self._instances_db, data=data)
-      instance._rev = data['_rev']
+      instance._rev = data["_rev"]
 
   @locking.ssynchronized(_config_lock)
   def RemoveInstance(self, instance_name):
@@ -282,13 +274,15 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
 
     del self._config_data.instances[instance_name]
     self._config_data.cluster.serial_no += 1
-    # instances: remove (_id by instance_name)
-    self._instances_db.delete(objects.Instance.ToDict(inst))
-    # config_data: cluster (serial_no update)
+
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
+
+    # Write the instance object to the 'instances' database.
+    self._instances_db.delete(objects.Instance.ToDict(inst))
 
   @locking.ssynchronized(_config_lock)
   def RenameInstance(self, old_name, new_name):
@@ -324,18 +318,20 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     # Force update of ssconf files
     self._config_data.cluster.serial_no += 1
 
-    # instances: update(old_doc, new_doc)
-    new_doc = objects.Instance.ToDict(inst)
-    new_doc.pop('_rev')
-    old_doc = objects.Instance.ToDict(old_inst)
-    old_doc['_deleted'] = True
-    self._instances_db.update([new_doc, old_doc])
-    inst._rev = new_doc['_rev']
-    # config_data: cluster (serial_no update)
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
+
+    # Write the instance object to the 'instances' database.
+    # FIXME: Create a function in the utils module for doc renames.
+    new_doc = objects.Instance.ToDict(inst)
+    new_doc.pop("_rev")
+    old_doc = objects.Instance.ToDict(old_inst)
+    old_doc["_deleted"] = True
+    self._instances_db.update([new_doc, old_doc])
+    inst._rev = new_doc["_rev"]
 
   @locking.ssynchronized(_config_lock)
   def AddNode(self, node, ec_id):
@@ -351,15 +347,23 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     node._id = node.name
     node.serial_no = 1
     node.ctime = node.mtime = time.time()
-    if self._UnlockedAddNodeToGroup(node.name, node.group):
-      group = self._config_data.nodegroups[node.group]
-      data = objects.NodeGroup.ToDict(group)
-      self._WriteConfig(db_name=self._nodegroups_db, data=data)
-      group._rev = data['_rev']
+    self._UnlockedAddNodeToGroup(node.name, node.group)
     self._config_data.nodes[node.name] = node
     self._config_data.cluster.serial_no += 1
-    # my-TODO: i should add a check in result here
-    # Enable continuous replication if node marked as MC.
+
+    # Write the cluster object to the 'config_data' database.
+    self._BumpSerialNo()
+    data = _ClusterObjectPrepare(self._config_data)
+    self._WriteConfig(db_name=self._cfg_db, data=data)
+    self._config_data._rev = data["_rev"]
+
+    # Write the node object to the 'nodes' database.
+    data = objects.Node.ToDict(node)
+    self._WriteConfig(db_name=self._nodes_db, data=data)
+    node._rev = data["_rev"]
+
+    # FIXME: I should add a check in the replication process.
+    # Enable continuous replication if the node marked as MC.
     if node.master_candidate:
       results = []
       for db_name in constants.CONFIG_DATA_DBS:
@@ -367,15 +371,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
         res = utils.UnlockedReplicateSetup(self._hostip, node.primary_ip,
                                            db_path, False)
         results.append((db_path.strip("/"), res))
-
-    data = objects.Node.ToDict(node)
-    self._WriteConfig(db_name=self._nodes_db, data=data)
-    node._rev = data['_rev']
-    # config_data: cluster (serial_no update)
-    self._BumpSerialNo()
-    data = _ClusterObjectPrepare(self._config_data)
-    self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
 
   @locking.ssynchronized(_config_lock)
   def RemoveNode(self, node_name):
@@ -388,12 +383,20 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       raise errors.ConfigurationError("Unknown node '%s'" % node_name)
 
     node = self._config_data.nodes[node_name]
-    if self._UnlockedRemoveNodeFromGroup(self._config_data.nodes[node_name]):
-      nodegroup_obj = self._config_data.nodegroups[node.group]
-      data = objects.NodeGroup.ToDict(nodegroup_obj)
-      self._WriteConfig(db_name=self._nodegroups_db, data=data)
-      nodegroup_obj._rev = data['_rev']
-    # my-TODO: i should add a check in result here
+    self._UnlockedRemoveNodeFromGroup(self._config_data.nodes[node_name])
+    del self._config_data.nodes[node_name]
+    self._config_data.cluster.serial_no += 1
+
+    # Write the cluster object to the 'config_data' database.
+    self._BumpSerialNo()
+    data = _ClusterObjectPrepare(self._config_data)
+    self._WriteConfig(db_name=self._cfg_db, data=data)
+    self._config_data._rev = data["_rev"]
+
+    # Write the node object to the 'nodes' database.
+    self._nodes_db.delete(objects.Node.ToDict(node))
+
+    # FIXME: I should add a check in the replication process.
     # Disable continuous replication if node was MC.
     if node.master_candidate:
       results = []
@@ -402,16 +405,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
         res = utils.UnlockedReplicateSetup(self._hostip, node.primary_ip,
                                            db_path, True)
         results.append((db_path.strip("/"), res))
-
-    del self._config_data.nodes[node_name]
-    self._config_data.cluster.serial_no += 1
-    # nodes: remove (_id by node_name)
-    self._nodes_db.delete(objects.Node.ToDict(node))
-    # config_data: cluster (serial_no update)
-    self._BumpSerialNo()
-    data = _ClusterObjectPrepare(self._config_data)
-    self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
 
   @locking.ssynchronized(_config_lock)
   def MaintainCandidatePool(self, exceptions):
@@ -442,56 +435,27 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
                         " fill the candidate pool (%d/%d)", mc_now, mc_max)
       if mod_list:
         self._config_data.cluster.serial_no += 1
-        # config_data: cluster update
+
+        # Write the cluster object to the 'config_data' database.
         self._BumpSerialNo()
         data = _ClusterObjectPrepare(self._config_data)
         self._WriteConfig(db_name=self._cfg_db, data=data)
-        self._config_data._rev = data['_rev']
+        self._config_data._rev = data["_rev"]
 
-    # nodes: modify (node)
-    for node in mod_list:
-      data = objects.Node.ToDict(node)
-      self._WriteConfig(self._nodes_db, data)
-      node._rev = data['_rev']
+        # Bulk update the node objects to the 'nodes' database.
+        nodes_docs = []
+        for node in mod_list:
+          nodes_docs.append(objects.Node.ToDict(node))
+
+        result = self._nodes_db.update(nodes_docs)
+        for success, _id, _rev in result:
+          if success:
+            self._config_data.nodes[_id]._rev = _rev
+          else:
+            msg = "Updating node %s with _rev %s failed." % (_id, _rev)
+            raise errors.ConfigurationError(msg)
 
     return mod_list
-
-  def _UnlockedAddNodeToGroup(self, node_name, nodegroup_uuid):
-    """Add a given node to the specified group and return True
-    if node successfully added to group.
-
-    """
-    if nodegroup_uuid not in self._config_data.nodegroups:
-      # This can happen if a node group gets deleted between its lookup and
-      # when we're adding the first node to it, since we don't keep a lock in
-      # the meantime. It's ok though, as we'll fail cleanly if the node group
-      # is not found anymore.
-      raise errors.OpExecError("Unknown node group: %s" % nodegroup_uuid)
-    if node_name not in self._config_data.nodegroups[nodegroup_uuid].members:
-      self._config_data.nodegroups[nodegroup_uuid].members.append(node_name)
-      return True
-
-    return False
-
-  def _UnlockedRemoveNodeFromGroup(self, node):
-    """Remove a given node from its group and return True
-    if node successfully removed from group.
-
-    """
-    nodegroup = node.group
-    if nodegroup not in self._config_data.nodegroups:
-      logging.warning("Warning: node '%s' has unknown node group '%s'"
-                      " (while being removed from it)", node.name, nodegroup)
-      return False
-    nodegroup_obj = self._config_data.nodegroups[nodegroup]
-    if node.name not in nodegroup_obj.members:
-      logging.warning("Warning: node '%s' not a member of its node group '%s'"
-                      " (while being removed from it)", node.name, nodegroup)
-      return False
-    else:
-      nodegroup_obj.members.remove(node.name)
-      return True
-
 
   @locking.ssynchronized(_config_lock)
   def AssignGroupNodes(self, mods):
@@ -555,27 +519,44 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
         new_group.members.append(node.name)
 
     # Update timestamps and serials (only once per node/group object)
+    nodes_docs = []
+    nodegroups_docs = []
     now = time.time()
     for obj in frozenset(itertools.chain(*resmod)): # pylint: disable=W0142
       obj.serial_no += 1
       obj.mtime = now
-      # nodes, nodegroups: update
+      # nodes, nodegroups objects update
       if isinstance(obj, objects.Node):
-        data = objects.Node.ToDict(obj)
-        self._WriteConfig(db_name=self._nodes_db, data=data)
-        obj._rev = data['_rev']
+        nodes_docs.append(objects.Node.ToDict(obj))
       elif isinstance(obj, objects.NodeGroup):
-        data = objects.NodeGroup.ToDict(obj)
-        self._WriteConfig(db_name=self._nodegroups_db, data=data)
-        obj._rev = data['_rev']
+        nodegroups_docs.append(objects.NodeGroup.ToDict(obj))
 
     # Force ssconf update
     self._config_data.cluster.serial_no += 1
-    # config_data: cluster (serial_no update)
+
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
+
+    # Bulk update the node objects to the 'nodes' database.
+    result = self._nodes_db.update(nodes_docs)
+    for success, _id, _rev in result:
+      if success:
+        self._config_data.nodes[_id]._rev = _rev
+      else:
+        msg = "Updating node %s with _rev %s failed." % (_id, _rev)
+        raise errors.ConfigurationError(msg)
+
+    # Bulk update the nodegroup objects to the 'nodegroups' database.
+    result = self._nodegroups_db.update(nodegroups_docs)
+    for success, _id, _rev in result:
+      if success:
+        self._config_data.nodegroups[_id]._rev = _rev
+      else:
+        msg = "Updating nodegroup %s with _rev %s failed." % (_id, _rev)
+        raise errors.ConfigurationError(msg)
 
   def _OpenConfig(self, accept_foreign):
     """Read the config data from the database.
@@ -590,12 +571,12 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       raise errors.ConfigurationError(err)
 
     # Make sure the configuration has the right version
+    _ValidateConfig(data)
 
     if (not hasattr(data, "cluster") or
         not hasattr(data.cluster, "rsahostkeypub")):
       raise errors.ConfigurationError("Incomplete configuration"
                                       " (missing cluster.rsahostkeypub)")
-
 
     if data.cluster.master_node != self._my_hostname and not accept_foreign:
       msg = ("The configuration denotes node %s as master, while my"
@@ -613,7 +594,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     # Upgrade configuration if needed
     self._UpgradeConfig()
 
-
   def _UpgradeConfig(self):
     """Run any upgrade steps.
 
@@ -628,9 +608,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
         created first, to avoid causing deadlock.
 
     """
-    # Keep a copy of the persistent part of _config_data to check for changes
-    # Serialization doesn't guarantee order in dictionaries
-    # oldconf = copy.deepcopy(self._config_data.ToDict())
     modified = node_updated = False
 
     # In-object upgrades
@@ -648,7 +625,7 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       default_nodegroup._id = default_nodegroup.uuid
       data = objects.NodeGroup.ToDict(default_nodegroup)
       self._WriteConfig(db_name=self._nodegroups_db, data=data)
-      default_nodegroup._rev = data['_rev']
+      default_nodegroup._rev = data["_rev"]
       modified = True
     for node in self._config_data.nodes.values():
       if not node.group:
@@ -663,19 +640,17 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
         group = self._config_data.nodegroups[node.group]
         data = objects.NodeGroup.ToDict(group)
         self._WriteConfig(db_name=self._nodegroups_db, data=data)
-        group._rev = data['_rev']
+        group._rev = data["_rev"]
         modified = True
       if node_updated:
         data = objects.Node.ToDict(node)
         self._WriteConfig(db_name=self._nodes_db, data=data)
-        node._rev = data['_rev']
+        node._rev = data["_rev"]
 
-    # modified = (oldconf != self._config_data.ToDict())
     if modified:
       # This is ok even if it acquires the internal lock, as _UpgradeConfig is
       # only called at config init time, without the lock held
       self.DropECReservations(_UPGRADE_CONFIG_JID)
-
 
   @locking.ssynchronized(_config_lock)
   def DistributeConfig(self, node, replicate):
@@ -695,7 +670,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       results.append((db_path.strip("/"), res))
 
     return results
-
 
   def _WriteConfig(self, db_name=None, data=None, feedback_fn=None):
     """Write the configuration data to persistent storage.
@@ -722,7 +696,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       raise errors.ConfigurationError("The configuration file has been"
                                       " modified since the last write, cannot"
                                       " update")
-
     self.write_count += 1
 
     # Write ssconf files on all nodes (including locally)
@@ -751,11 +724,11 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     """
     self._config_data.cluster.volume_group_name = vg_name
     self._config_data.cluster.serial_no += 1
-    # config_data: cluster
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
 
   @locking.ssynchronized(_config_lock)
   def SetDRBDHelper(self, drbd_helper):
@@ -764,11 +737,11 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     """
     self._config_data.cluster.drbd_usermode_helper = drbd_helper
     self._config_data.cluster.serial_no += 1
-    # config_data: cluster
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
 
   @locking.ssynchronized(_config_lock)
   def Update(self, target, feedback_fn, ec_id=None):
@@ -812,10 +785,6 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       # for node updates, we need to increase the cluster serial too
       self._config_data.cluster.serial_no += 1
       self._config_data.cluster.mtime = now
-      self._BumpSerialNo()
-      data = _ClusterObjectPrepare(self._config_data)
-      self._WriteConfig(db_name=self._cfg_db, data=data)
-      self._config_data._rev = data['_rev']
 
     if isinstance(target, objects.Instance):
       self._UnlockedReleaseDRBDMinors(target.name)
@@ -824,12 +793,13 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       # Commit all ips reserved by OpInstanceSetParams and OpGroupSetParams
       self._UnlockedCommitTemporaryIps(ec_id)
 
-    if isinstance(target, objects.Cluster):
+    if isinstance(target, objects.Cluster) or update_serial:
+      # Write the cluster object to the 'config_data' database.
       db_name = self._cfg_db
       self._BumpSerialNo()
       data = _ClusterObjectPrepare(self._config_data)
       self._WriteConfig(db_name=db_name, data=data, feedback_fn=feedback_fn)
-      self._config_data._rev = data['_rev']
+      self._config_data._rev = data["_rev"]
     else:
       if isinstance(target, objects.Node):
         db_name = self._nodes_db
@@ -843,8 +813,10 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
       elif isinstance(target, objects.Network):
         db_name = self._networks_db
         data = objects.Network.ToDict(target)
+
+      # Write the updated object to the appropriate database.
       self._WriteConfig(db_name=db_name, data=data, feedback_fn=feedback_fn)
-      target._rev = data['_rev']
+      target._rev = data["_rev"]
 
   @locking.ssynchronized(_config_lock)
   def AddNetwork(self, net, ec_id, check_uuid=True):
@@ -854,16 +826,18 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
 
     """
     self._UnlockedAddNetwork(net, ec_id, check_uuid)
-    # networks: add (net)
-    net._id = net.uuid
-    data = objects.Network.ToDict(net)
-    self._WriteConfig(db_name=self._networks_db, data=data)
-    net._rev = data['_rev']
-    # config_data: cluster (serial_no update)
+
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
+
+    # Write the network object to the 'networks' database.
+    net._id = net.uuid
+    data = objects.Network.ToDict(net)
+    self._WriteConfig(db_name=self._networks_db, data=data)
+    net._rev = data["_rev"]
 
   @locking.ssynchronized(_config_lock)
   def RemoveNetwork(self, network_uuid):
@@ -880,14 +854,15 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
     net = self._config_data.networks[network_uuid]
     del self._config_data.networks[network_uuid]
     self._config_data.cluster.serial_no += 1
-    # networks: remove (_id by network_uuid)
-    self._networks_db.delete(objects.Node.ToDict(net))
-    # config_data: cluster (serial_no update)
+
+    # Write the cluster object to the 'config_data' database.
     self._BumpSerialNo()
     data = _ClusterObjectPrepare(self._config_data)
     self._WriteConfig(db_name=self._cfg_db, data=data)
-    self._config_data._rev = data['_rev']
+    self._config_data._rev = data["_rev"]
 
+    # Write the network object to the 'networks' database.
+    self._networks_db.delete(objects.Node.ToDict(net))
 
   def _BuildConfigData(self):
     """This function builds the config.data from it's components, because we
@@ -902,37 +877,37 @@ class CouchDBConfigWriter(base._BaseConfigWriter):
 
     # nodes
     nodes = {}
-    view_nodes = self._nodes_db.view('_all_docs', include_docs=True)
+    view_nodes = self._nodes_db.view("_all_docs", include_docs=True)
     for row in view_nodes.rows:
-      node = row['doc']
-      nodes[node['name']] = node
+      node = row["doc"]
+      nodes[node["name"]] = node
 
     # instances
     instances = {}
-    view_insts = self._instances_db.view('_all_docs', include_docs=True)
+    view_insts = self._instances_db.view("_all_docs", include_docs=True)
     for row in view_insts.rows:
-      instance = row['doc']
-      instances[instance['name']] = instance
+      instance = row["doc"]
+      instances[instance["name"]] = instance
 
     # nodegroups
     nodegroups = {}
-    view_groups = self._nodegroups_db.view('_all_docs', include_docs=True)
+    view_groups = self._nodegroups_db.view("_all_docs", include_docs=True)
     for row in view_groups.rows:
-      nodegroup = row['doc']
-      nodegroups[nodegroup['uuid']] = nodegroup
+      nodegroup = row["doc"]
+      nodegroups[nodegroup["uuid"]] = nodegroup
 
     # networks
     networks = {}
-    view_networks = self._networks_db.view('_all_docs', include_docs=True)
+    view_networks = self._networks_db.view("_all_docs", include_docs=True)
     for row in view_networks.rows:
-      network = row['doc']
-      networks[network['uuid']] = network
+      network = row["doc"]
+      networks[network["uuid"]] = network
 
     # build the config.data object
-    raw_data['nodegroups'] = nodegroups
-    raw_data['nodes'] = nodes
-    raw_data['instances'] = instances
-    raw_data['networks'] = networks
+    raw_data["nodegroups"] = nodegroups
+    raw_data["nodes"] = nodes
+    raw_data["instances"] = instances
+    raw_data["networks"] = networks
 
     return raw_data
 
@@ -952,10 +927,16 @@ def _ClusterObjectPrepare(config_data):
   @return: The config_data object ready for writing to disk
 
   """
-  data = objects.ConfigData.ToDict(config_data)
-  data['nodegroups'] = {}
-  data['nodes'] = {}
-  data['instances'] = {}
-  data['networks'] = {}
+  _config = objects.ConfigData(_id=config_data._id,
+                               _rev=config_data._rev,
+                               version=config_data.version,
+                               serial_no=config_data.serial_no,
+                               mtime=config_data.mtime,
+                               ctime=config_data.ctime,
+                               cluster=config_data.cluster,
+                               instances={},
+                               nodes={},
+                               nodegroups={},
+                               networks={})
 
-  return data
+  return objects.ConfigData.ToDict(_config)

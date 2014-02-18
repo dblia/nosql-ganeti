@@ -211,8 +211,8 @@ def UnlockedReplicateSetup(host_ip, node_ip, db_name, replicate):
       doc = repl_db.get(repl_doc_id)
       repl_db.delete(doc)
     else:
-      repl_doc = { 'source' : master_url, 'target' : cand_url,
-                   'continuous' : True, 'create_target' : True }
+      repl_doc = {'source': master_url, 'target': cand_url,
+                  'continuous': True, 'create_target': True}
       repl_db[repl_doc_id] = repl_doc
   except Exception, err:
     msg = ("Replication from source host %s, to target host %s failed: %s. %s"
@@ -252,7 +252,7 @@ def MasterFailoverDbs(old_master_ip, new_master_ip, db_name):
   for task in old_server.tasks():
     source = task["source"]
     target = task["target"]
-    if  (db_name in source) and (db_name in target):
+    if (db_name in source) and (db_name in target):
       # Delete old replication document
       old_repl_doc_id = "".join(["from_", source, "_to_", target])
       doc = old_repl_db.get(old_repl_doc_id)
@@ -262,8 +262,8 @@ def MasterFailoverDbs(old_master_ip, new_master_ip, db_name):
       if target == new_source:
         target = old_source
       new_repl_doc_id = "".join(["from_", new_source, "_to_", target])
-      repl_doc = { "source" : new_source, "target" : target,
-                   "continuous" : True, "create_target" :  True }
+      repl_doc = {"source": new_source, "target": target,
+                  "continuous": True, "create_target": True}
       new_repl_db[new_repl_doc_id] = repl_doc
 
 

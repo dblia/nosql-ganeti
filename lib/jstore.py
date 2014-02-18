@@ -42,6 +42,7 @@ from ganeti import pathutils
 
 JOBS_PER_ARCHIVE_DIRECTORY = 10000
 
+
 class _Base:
   """Base class for job queue handling abstraction
 
@@ -133,7 +134,6 @@ class FileStorage(_Base):
       raise errors.JobQueueError("Content of file '%s' is not numeric: %s" %
                                  (doc_name, err))
 
-
   def ReadSerial(self):
     """Read the serial file.
 
@@ -142,7 +142,6 @@ class FileStorage(_Base):
     """
     return self._ReadNumericFile(pathutils.JOB_QUEUE_SERIAL_FILE)
 
-
   def ReadVersion(self):
     """Read the queue version.
 
@@ -150,7 +149,6 @@ class FileStorage(_Base):
 
     """
     return self._ReadNumericFile(pathutils.JOB_QUEUE_VERSION_FILE)
-
 
   def InitAndVerifyQueue(self, must_lock):
     """Open and lock job queue.
@@ -223,7 +221,6 @@ class FileStorage(_Base):
 
     return queue_lock
 
-
   def CheckDrainFlag(self):
     """Check if the queue is marked to be drained.
 
@@ -234,7 +231,6 @@ class FileStorage(_Base):
 
     """
     return os.path.exists(pathutils.JOB_QUEUE_DRAIN_FILE)
-
 
   def SetDrainFlag(self, drain_flag):
     """Sets the drain flag for the queue.
@@ -293,7 +289,6 @@ class CouchDBStorage(_Base):
 
     """
     return self._ReadNumericFile('serial')
-
 
   def ReadVersion(self):
     """Read the queue version.
@@ -363,7 +358,6 @@ class CouchDBStorage(_Base):
     except TypeError:
       return (None, None)
 
-
   def InitAndVerifyQueue(self, must_lock):
     """Open and lock job queue.
 
@@ -395,7 +389,7 @@ class CouchDBStorage(_Base):
         (version, version_rev) = self.ReadVersion()
         if version is None:
           # Write new version doc to database
-          data = {'_id' : 'version', 'value' : constants.JOB_QUEUE_VERSION }
+          data = {"_id": "version", "value": constants.JOB_QUEUE_VERSION}
           version_rev = utils.WriteDocument(self._queue, data)
 
           # Read again
@@ -411,7 +405,7 @@ class CouchDBStorage(_Base):
         (serial, serial_rev) = self.ReadSerial()
         if serial is None:
           # Write new serial doc to database
-          data = {'_id' : 'serial', 'value' : 0 }
+          data = {"_id": "serial", "value": 0}
           serial_rev = utils.WriteDocument(self._queue, data)
 
           # Read again
@@ -500,7 +494,6 @@ class CouchDBStorage(_Base):
 
     return queue_lock
 
-
   def CheckDrainFlag(self):
     """Check if the queue is marked to be drained.
 
@@ -515,7 +508,6 @@ class CouchDBStorage(_Base):
     else:
       return False
 
-
   def SetDrainFlag(self, drain_flag, drain_rev):
     """Sets the drain flag for the queue.
 
@@ -523,9 +515,9 @@ class CouchDBStorage(_Base):
 
     """
     if drain_rev:
-      data = { "_id" : "drain" , "_rev" : drain_rev }
+      data = {"_id": "drain", "_rev": drain_rev}
     else:
-      data = { "_id" : "drain" }
+      data = {"_id": "drain"}
 
     if drain_flag:
       return utils.WriteDocument(self._queue, data)
@@ -583,6 +575,7 @@ _JSTORAGE_TYPES = {
   constants.JQ_DISK: FileStorage,
   constants.JQ_COUCHDB: CouchDBStorage
   }
+
 
 def GetJStoreClass(name):
   """Returns the class for a job queue storage type

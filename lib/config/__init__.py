@@ -19,7 +19,7 @@
 # 02110-1301, USA.
 
 
-"""Configuration managment abstraction module
+"""Configuration management abstraction package.
 
 The configuration data is stored on every node but is updated on the master
 only. After each update, the master distributes the data to the other nodes.
@@ -32,8 +32,7 @@ much memory.
 from ganeti import errors
 from ganeti import constants
 
-from ganeti.config import default
-from ganeti.config import couch
+from ganeti.config import default, couch
 
 # Lookup table for configuration storage types
 _CONFIG_DATA_TYPES = {
@@ -41,8 +40,9 @@ _CONFIG_DATA_TYPES = {
   constants.CFG_COUCHDB: couch.CouchDBConfigWriter
   }
 
+
 def GetConfigWriterClass(name):
-  """Returns the class for a configuration data storage type
+  """Returns the class for a configuration data storage type.
 
   @type name: string
   @param name: Configuration storage type
@@ -56,7 +56,7 @@ def GetConfigWriterClass(name):
 
 
 def GetConfigWriter(name, **kargs):
-  """Factory function for configuration storage methods.
+  """Factory method for configuration storage engines.
 
   @type name: string
   @param name: Configuration storage type
