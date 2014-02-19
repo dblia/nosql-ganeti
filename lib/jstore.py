@@ -257,8 +257,8 @@ class CouchDBStorage(_Base):
   def __init__(self, queue, archive):
     """Initializes this class
 
-    @type queue_db: L{couchdb.client.Database} object
-    @param queue_db: queue database instance
+    @type queue: L{couchdb.client.Database} object
+    @param queue: queue database instance
 
     """
     self._queue = queue
@@ -267,16 +267,16 @@ class CouchDBStorage(_Base):
   def _ReadNumericFile(self, doc_name):
     """Reads a document containing a number.
 
-    See L{_Base._ReadNumericDocument}
+    See L{_Base._ReadNumericFile}
 
     """
-    contents = self._queue.get(doc_name)
+    contents = utils.GetDocument(self._queue, doc_name)
     if not contents:
       # File haven't found
       return (None, None)
 
     try:
-      return (int(contents['value']), contents['_rev'])
+      return (int(contents["value"]), contents["_rev"])
     except (ValueError, TypeError), err:
       # Couldn't convert to int
       raise errors.JobQueueError("Content of file '%s' is not numeric: %s" %
@@ -288,16 +288,15 @@ class CouchDBStorage(_Base):
     The queue should be locked while this function is called.
 
     """
-    return self._ReadNumericFile('serial')
+    return self._ReadNumericFile("serial")
 
   def ReadVersion(self):
     """Read the queue version.
 
     The queue should be locked while this function is called.
 
-
     """
-    return self._ReadNumericFile('version')
+    return self._ReadNumericFile("version")
 
   def ReadDrain(self):
     """Read the serial file.
@@ -306,7 +305,7 @@ class CouchDBStorage(_Base):
 
     """
     try:
-      return self._queue.get('drain')['_rev']
+      return utils.GetDocument(self._queue, "drain")["_rev"]
     except TypeError:
       return None
 
@@ -317,8 +316,8 @@ class CouchDBStorage(_Base):
 
     """
     try:
-      doc = self._queue.get('_design/queue_view')
-      return (doc['views'], doc['_rev'])
+      doc = utils.GetDocument(self._queue, "_design/queue_view")
+      return (doc["views"], doc["_rev"])
     except TypeError:
       return (None, None)
 
@@ -329,8 +328,8 @@ class CouchDBStorage(_Base):
 
     """
     try:
-      doc = self._queue.get('_design/filter')
-      return (doc['filters'], doc['_rev'])
+      doc = utils.GetDocument(self._queue, "_design/filter")
+      return (doc["filters"], doc["_rev"])
     except TypeError:
       return (None, None)
 
@@ -341,8 +340,8 @@ class CouchDBStorage(_Base):
 
     """
     try:
-      doc = self._archive.get('_design/queue_view')
-      return (doc['views'], doc['_rev'])
+      doc = utils.GetDocument(self._queue, "_design/queue_view")
+      return (doc["views"], doc["_rev"])
     except TypeError:
       return (None, None)
 
@@ -353,8 +352,8 @@ class CouchDBStorage(_Base):
 
     """
     try:
-      doc = self._archive.get('_design/filter')
-      return (doc['filters'], doc['_rev'])
+      doc = utils.GetDocument(self._queue, "_design/filter")
+      return (doc["filters"], doc["_rev"])
     except TypeError:
       return (None, None)
 
@@ -503,7 +502,7 @@ class CouchDBStorage(_Base):
     See L{_Base.CheckDrainFlag}
 
     """
-    if self._queue.get('drain'):
+    if utils.GetDocument(self._queue, "drain"):
       return True
     else:
       return False
@@ -522,7 +521,7 @@ class CouchDBStorage(_Base):
     if drain_flag:
       return utils.WriteDocument(self._queue, data)
     else:
-      data['_deleted'] = True
+      data["_deleted"] = True
       return utils.WriteDocument(self._queue, data)
 
     assert (not drain_flag) ^ self.CheckDrainFlag()

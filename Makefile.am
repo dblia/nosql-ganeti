@@ -1245,6 +1245,9 @@ check_python_code = \
 	$(DOCPP) \
 	$(all_python_code)
 
+epydoc_extra_modules = \
+	couchdb.client
+
 lint_python_code = \
 	ganeti \
 	ganeti/http/server.py \
@@ -1544,7 +1547,7 @@ $(REPLACE_VARS_SED): $(SHELL_ENV_INIT) Makefile stamp-directories
 	  echo 's#@''GNTMASTERDGROUP@#$(MASTERD_GROUP)#g'; \
 	  echo 's#@''GNTDAEMONSGROUP@#$(DAEMONS_GROUP)#g'; \
 	  echo 's#@''CUSTOM_ENABLE_CONFD@#$(ENABLE_CONFD)#g'; \
-	  echo 's#@''MODULES@#$(strip $(lint_python_code))#g'; \
+	  echo 's#@''MODULES@#$(strip $(lint_python_code) $(epydoc_extra_modules))#g'; \
 	  echo 's#@''XEN_CONFIG_DIR@#$(XEN_CONFIG_DIR)#g'; \
 	  echo; \
 	  echo '/^@SHELL_ENV_INIT@$$/ {'; \

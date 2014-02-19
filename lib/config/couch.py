@@ -176,8 +176,8 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     self._WriteConfig(db_name=self._cfg_db, data=data)
     self._config_data._rev = data["_rev"]
 
-    # Write the nodegroup object to the 'nodegroups' database.
-    self._nodegroups_db.delete(objects.NodeGroup.ToDict(group))
+    # Delete the nodegroup document from the 'nodegroups' database.
+    utils.DeleteDocument(self._nodegroups_db, objects.NodeGroup.ToDict(group))
 
   @locking.ssynchronized(_config_lock)
   def AddInstance(self, instance, ec_id):
@@ -281,8 +281,8 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     self._WriteConfig(db_name=self._cfg_db, data=data)
     self._config_data._rev = data["_rev"]
 
-    # Write the instance object to the 'instances' database.
-    self._instances_db.delete(objects.Instance.ToDict(inst))
+    # Delete the instance document from the 'instances' database.
+    utils.DeleteDocument(self._instances_db, objects.Instance.ToDict(inst))
 
   @locking.ssynchronized(_config_lock)
   def RenameInstance(self, old_name, new_name):
@@ -324,14 +324,10 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     self._WriteConfig(db_name=self._cfg_db, data=data)
     self._config_data._rev = data["_rev"]
 
-    # Write the instance object to the 'instances' database.
-    # FIXME: Create a function in the utils module for doc renames.
+    # Update the instance object to the 'instances' database.
     new_doc = objects.Instance.ToDict(inst)
-    new_doc.pop("_rev")
     old_doc = objects.Instance.ToDict(old_inst)
-    old_doc["_deleted"] = True
-    self._instances_db.update([new_doc, old_doc])
-    inst._rev = new_doc["_rev"]
+    inst._rev = utils.InstRename(self._instances_db, new_doc, old_doc)
 
   @locking.ssynchronized(_config_lock)
   def AddNode(self, node, ec_id):
@@ -393,8 +389,8 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     self._WriteConfig(db_name=self._cfg_db, data=data)
     self._config_data._rev = data["_rev"]
 
-    # Write the node object to the 'nodes' database.
-    self._nodes_db.delete(objects.Node.ToDict(node))
+    # Delete the node document form the 'nodes' database.
+    utils.DeleteDocument(self._nodes_db, objects.Node.ToDict(node))
 
     # FIXME: I should add a check in the replication process.
     # Disable continuous replication if node was MC.
@@ -447,7 +443,7 @@ class CouchDBConfigWriter(_BaseConfigWriter):
         for node in mod_list:
           nodes_docs.append(objects.Node.ToDict(node))
 
-        result = self._nodes_db.update(nodes_docs)
+        result = utils.BulkUpdateDocs(self._nodes_db, nodes_docs)
         for success, _id, _rev in result:
           if success:
             self._config_data.nodes[_id]._rev = _rev
@@ -541,7 +537,7 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     self._config_data._rev = data["_rev"]
 
     # Bulk update the node objects to the 'nodes' database.
-    result = self._nodes_db.update(nodes_docs)
+    result = utils.BulkUpdateDocs(self._nodes_db, nodes_docs)
     for success, _id, _rev in result:
       if success:
         self._config_data.nodes[_id]._rev = _rev
@@ -550,7 +546,7 @@ class CouchDBConfigWriter(_BaseConfigWriter):
         raise errors.ConfigurationError(msg)
 
     # Bulk update the nodegroup objects to the 'nodegroups' database.
-    result = self._nodegroups_db.update(nodegroups_docs)
+    result = utils.BulkUpdateDocs(self._nodegroups_db, nodegroups_docs)
     for success, _id, _rev in result:
       if success:
         self._config_data.nodegroups[_id]._rev = _rev
@@ -565,7 +561,7 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     raw_data = self._BuildConfigData()
 
     try:
-      # Tranform <couchdb.client.Document> object to <ConfigData> object
+      # Tranform <couchdb.Document> object to <ConfigData> object
       data = objects.ConfigData.FromDict(raw_data)
     except Exception, err:
       raise errors.ConfigurationError(err)
@@ -751,7 +747,7 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     GetInstanceInfo, GetNodeInfo, GetCluster) has been updated and the
     caller wants the modifications saved to the backing store. Note
     that all modified objects will be saved, but the target argument
-    is the one the caller wants to ensure that it's saved.
+    is the one the caller wants to ensure that it is saved.
 
     See L{_BaseConfigWriter.Update}
 
@@ -793,18 +789,27 @@ class CouchDBConfigWriter(_BaseConfigWriter):
       # Commit all ips reserved by OpInstanceSetParams and OpGroupSetParams
       self._UnlockedCommitTemporaryIps(ec_id)
 
-    if isinstance(target, objects.Cluster) or update_serial:
+    if update_serial:
       # Write the cluster object to the 'config_data' database.
       db_name = self._cfg_db
       self._BumpSerialNo()
       data = _ClusterObjectPrepare(self._config_data)
       self._WriteConfig(db_name=db_name, data=data, feedback_fn=feedback_fn)
       self._config_data._rev = data["_rev"]
+
+      # A node object has been updated.
+      db_name = self._nodes_db
+      data = objects.Node.ToDict(target)
+      self._WriteConfig(db_name=db_name, data=data, feedback_fn=feedback_fn)
+      target._rev = data["_rev"]
+    elif isinstance(target, objects.Cluster):
+      db_name = self._cfg_db
+      self._BumpSerialNo()
+      data = _ClusterObjectPrepare(self._config_data)
+      self._WriteConfig(db_name=db_name, data=data, feedback_fn=feedback_fn)
+      self._config_data._rev = data["_rev"]
     else:
-      if isinstance(target, objects.Node):
-        db_name = self._nodes_db
-        data = objects.Node.ToDict(target)
-      elif isinstance(target, objects.Instance):
+      if isinstance(target, objects.Instance):
         db_name = self._instances_db
         data = objects.Instance.ToDict(target)
       elif isinstance(target, objects.NodeGroup):
@@ -861,44 +866,47 @@ class CouchDBConfigWriter(_BaseConfigWriter):
     self._WriteConfig(db_name=self._cfg_db, data=data)
     self._config_data._rev = data["_rev"]
 
-    # Write the network object to the 'networks' database.
-    self._networks_db.delete(objects.Node.ToDict(net))
+    # Delete the network document from the 'networks' database.
+    utils.DeleteDocument(self._networks_db, objects.Node.ToDict(net))
 
   def _BuildConfigData(self):
-    """This function builds the config.data from it's components, because we
-    don't want to change it's memory represantation.
+    """This function builds the config.data from its components, because we
+    don't want to change its memory represantation.
 
     @rtype: L{couchdb.client.Document}
-    @return: The config.data with it's separated components in one object
+    @return: The config.data with its separated components in one object
 
     """
     # Get config.data from the db
-    raw_data = self._cfg_db.get("config.data")
+    raw_data = utils.GetDocument(self._cfg_db, "config.data")
 
     # nodes
     nodes = {}
-    view_nodes = self._nodes_db.view("_all_docs", include_docs=True)
+    view_nodes = utils.ViewExec(self._nodes_db, "_all_docs", include_docs=True)
     for row in view_nodes.rows:
       node = row["doc"]
       nodes[node["name"]] = node
 
     # instances
     instances = {}
-    view_insts = self._instances_db.view("_all_docs", include_docs=True)
+    view_insts = \
+        utils.ViewExec(self._instances_db, "_all_docs", include_docs=True)
     for row in view_insts.rows:
       instance = row["doc"]
       instances[instance["name"]] = instance
 
     # nodegroups
     nodegroups = {}
-    view_groups = self._nodegroups_db.view("_all_docs", include_docs=True)
+    view_groups = \
+        utils.ViewExec(self._nodegroups_db, "_all_docs", include_docs=True)
     for row in view_groups.rows:
       nodegroup = row["doc"]
       nodegroups[nodegroup["uuid"]] = nodegroup
 
     # networks
     networks = {}
-    view_networks = self._networks_db.view("_all_docs", include_docs=True)
+    view_networks = \
+        utils.ViewExec(self._networks_db, "_all_docs", include_docs=True)
     for row in view_networks.rows:
       network = row["doc"]
       networks[network["uuid"]] = network
@@ -915,14 +923,14 @@ class CouchDBConfigWriter(_BaseConfigWriter):
 def _ClusterObjectPrepare(config_data):
   """Prepares the config_data.cluster object for writing to disk.
 
-  We separated the config.data object into it's most heavy loaded
+  We separated the config.data object into its most heavy loaded
   components {nodes, instances, nodegroups, networks, cluster} but
   the memory represantation remain as it was. So before we write
   the cluster part of the config.data to disk we should first flush
   the rest config.data components.
 
-  @type data: L{objects.ConfigData}
-  @param data: configuration data
+  @type config_data: L{objects.ConfigData}
+  @param config_data: configuration data
   @rtype: dict
   @return: The config_data object ready for writing to disk
 

@@ -610,7 +610,7 @@ def _CheckInstancesNodeGroups(cfg, instances, owned_groups, owned_nodes,
                               cur_group_uuid):
   """Checks if node groups for locked instances are still correct.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: Cluster configuration
   @type instances: dict; string as key, L{objects.Instance} as value
   @param instances: Dictionary, instance name as key, instance object as value
@@ -636,7 +636,7 @@ def _CheckInstanceNodeGroups(cfg, instance_name, owned_groups,
                              primary_only=False):
   """Checks if the owned node groups are still correct for an instance.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: The cluster configuration
   @type instance_name: string
   @param instance_name: Instance name
@@ -664,7 +664,7 @@ def _CheckInstanceNodeGroups(cfg, instance_name, owned_groups,
 def _CheckNodeGroupInstances(cfg, group_uuid, owned_instances):
   """Checks if the instances in a node group are still correct.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: The cluster configuration
   @type group_uuid: string
   @param group_uuid: Node group UUID
@@ -688,7 +688,7 @@ def _CheckNodeGroupInstances(cfg, group_uuid, owned_instances):
 def _SupportsOob(cfg, node):
   """Tells if node supports OOB.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: The cluster configuration
   @type node: L{objects.Node}
   @param node: The node
@@ -701,7 +701,7 @@ def _SupportsOob(cfg, node):
 def _IsExclusiveStorageEnabledNode(cfg, node):
   """Whether exclusive_storage is in effect for the given node.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: The cluster configuration
   @type node: L{objects.Node}
   @param node: The node
@@ -715,7 +715,7 @@ def _IsExclusiveStorageEnabledNode(cfg, node):
 def _IsExclusiveStorageEnabledNodeName(cfg, nodename):
   """Whether exclusive_storage is in effect for the given node.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: The cluster configuration
   @type nodename: string
   @param nodename: The node
@@ -1287,7 +1287,7 @@ def _ComputeIPolicyInstanceViolation(ipolicy, instance, cfg,
   @param ipolicy: The ipolicy to verify against
   @type instance: L{objects.Instance}
   @param instance: The instance to verify
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: Cluster configuration
   @param _compute_fn: The function to verify ipolicy (unittest only)
   @see: L{_ComputeIPolicySpecViolation}
@@ -1341,7 +1341,7 @@ def _ComputeIPolicyNodeViolation(ipolicy, instance, current_group,
   @param instance: The instance object to verify
   @param current_group: The current group of the instance
   @param target_group: The new group of the instance
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: Cluster configuration
   @param _compute_fn: The function to verify ipolicy (unittest only)
   @see: L{_ComputeIPolicySpecViolation}
@@ -1360,7 +1360,7 @@ def _CheckTargetNodeIPolicy(lu, ipolicy, instance, node, cfg, ignore=False,
   @param ipolicy: The ipolicy to verify
   @param instance: The instance object to verify
   @param node: The new node to relocate
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: Cluster configuration
   @param ignore: Ignore violations of the ipolicy
   @param _compute_fn: The function to verify ipolicy (unittest only)
@@ -1385,7 +1385,7 @@ def _ComputeNewInstanceViolations(old_ipolicy, new_ipolicy, instances, cfg):
   @param old_ipolicy: The current (still in-place) ipolicy
   @param new_ipolicy: The new (to become) ipolicy
   @param instances: List of instances to verify
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: Cluster configuration
   @return: A list of instances which violates the new ipolicy but
       did not before
@@ -1683,7 +1683,7 @@ def _ComputeViolatingInstances(ipolicy, instances, cfg):
   @param ipolicy: The ipolicy to verify
   @type instances: L{objects.Instance}
   @param instances: List of instances to verify
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: Cluster configuration
   @return: A frozenset of instance names violating the ipolicy
 
@@ -1836,7 +1836,7 @@ def _CheckIAllocatorOrNode(lu, iallocator_slot, node_slot):
 def _GetDefaultIAllocator(cfg, ialloc):
   """Decides on which iallocator to use.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: Cluster configuration object
   @type ialloc: string or None
   @param ialloc: Iallocator specified in opcode
@@ -2940,7 +2940,7 @@ class LUClusterVerifyGroup(LogicalUnit, _VerifyErrors):
     @param instanceinfo: the dict of instances
     @param drbd_helper: the configured DRBD usermode helper
     @param drbd_map: the DRBD map as returned by
-        L{ganeti.config.ConfigWriter.ComputeDRBDMap}
+        L{config.base._BaseConfigWriter.ComputeDRBDMap}
 
     """
     node = ninfo.name
@@ -4120,7 +4120,7 @@ class LUClusterRename(LogicalUnit):
 def _ValidateNetmask(cfg, netmask):
   """Checks if a netmask is valid.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: The cluster configuration
   @type netmask: int
   @param netmask: the netmask to be verified
@@ -4751,7 +4751,8 @@ def _RemoveRemainedReplicationTasks(lu):
       # We remove only the ganeti specific replication tasks.
       for _id in repl_db:
         if _id.partition("_to_")[1] == "_to_":
-          repl_db.delete(repl_db.get(_id))
+          doc = utils.GetDocument(repl_db, _id)
+          utils.DeleteDocument(repl_db, doc)
 
 
 class LUClusterRedistConf(NoHooksLU):

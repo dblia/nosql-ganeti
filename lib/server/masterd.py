@@ -162,7 +162,8 @@ class _MasterShutdownCheck:
   def __call__(self, jq_prepare_result):
     """Determines if master daemon is ready for shutdown.
 
-    @param jq_prepare_result: Result of L{jqueue.JobQueue.PrepareShutdown}
+    @param jq_prepare_result: Result of
+                              L{jqueue.base._BaseJobQueue.PrepareShutdown}
     @rtype: None or number
     @return: None if master daemon is ready, timeout if the check must be
              repeated

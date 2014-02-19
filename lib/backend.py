@@ -252,7 +252,7 @@ def JobQueuePurge():
 
 
 def CouchDBPurge(candidate_nodes):
-  """Removes job queue, archived and config.data related databases.
+  """Removes job queue, archived and config.data related databases.i
 
   @type candidate_nodes: list of strings
   @param candidate_nodes: A list containing the master candidate names.
@@ -272,8 +272,8 @@ def CouchDBPurge(candidate_nodes):
       utils.DeleteDB(constants.NODEGROUPS_DB, my_hostip, port)
       utils.DeleteDB(constants.NETWORKS_DB, my_hostip, port)
   except Exception:
-    raise errors.OpPrereqError("CouchDB error during cluster destroy in"
-                               " CouchDBsPurge method: %s" % errors.ECODE_NOENT)
+    raise errors.OpPrereqError("CouchDB error during CouchDBPurge method: %s" %
+                               errors.ECODE_NOENT)
 
 
 def GetMasterInfo():
@@ -535,7 +535,7 @@ def LeaveCluster(modify_ssh_setup):
   @param modify_ssh_setup: boolean
 
   """
-  # Grub the appropriate values before clearing the DATA_DIR directory.
+  # Get the appropriate ssconf values before clearing the DATA_DIR directory.
   backend_storage = _GetConfig().GetBackendStorageType()
   candidate_nodes = _GetConfig().GetMasterCandidates()
 
@@ -3166,8 +3166,6 @@ def DemoteFromMC():
 
     utils.RemoveFile(pathutils.CLUSTER_CONF_FILE)
   elif backend_storage == "couchdb":
-    # FIXME: create a backup for config.data for couchdb backend
-    # before we delete it.
     master_ip = netutils.Hostname.GetIP(master)
     myself_ip = netutils.Hostname.GetIP(myself)
     results = []
@@ -3183,6 +3181,17 @@ def DemoteFromMC():
         db_path = "".join(("/", db_name, "/"))
         res = utils.UnlockedReplicateSetup(master_ip, myself_ip, db_path, True)
         results.append((db_path.strip("/"), res))
+
+      # FIXME: Issue #3,
+      # We should create a backup of the configuration and save it to disk, same
+      # as the disk storage engine. A function that will flushes the config.data
+      # object from memory to disk can be created to the config/couch.py module.
+      port = constants.DEFAULT_COUCHDB_PORT
+      utils.DeleteDB(constants.CLUSTER_DB, myself_ip, port)
+      utils.DeleteDB(constants.INSTANCES_DB, myself_ip, port)
+      utils.DeleteDB(constants.NODES_DB, myself_ip, port)
+      utils.DeleteDB(constants.NODEGROUPS_DB, myself_ip, port)
+      utils.DeleteDB(constants.NETWORKS_DB, myself_ip, port)
     except Exception, err:
       _Fail("CouchDB error while demoting from MC: %s", err)
 

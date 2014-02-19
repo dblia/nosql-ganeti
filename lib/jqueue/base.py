@@ -21,7 +21,7 @@
 
 """Job queue management abstraction - base class and utility functions.
 
-Locking: there's a single, large lock in the L{JobQueue} class. It's
+Locking: there's a single, large lock in the L{_BaseJobQueue} class. It's
 used by all other classes in this module.
 
 @var JOBQUEUE_THREADS: the number of worker threads we start for
@@ -183,7 +183,7 @@ class _QueuedJob(object):
   This is what we use to track the user-submitted jobs. Locking must
   be taken care of by users of this class.
 
-  @type queue: L{JobQueue}
+  @type queue: L{_BaseJobQueue}
   @ivar queue: the parent queue
   @ivar id: the job ID
   @type ops: list
@@ -205,7 +205,7 @@ class _QueuedJob(object):
   def __init__(self, queue, job_id, ops, writable):
     """Constructor for the _QueuedJob.
 
-    @type queue: L{JobQueue}
+    @type queue: L{_BaseJobQueue}
     @param queue: our parent queue
     @type job_id: job_id
     @param job_id: our job id
@@ -259,7 +259,7 @@ class _QueuedJob(object):
   def Restore(cls, queue, state, writable, archived):
     """Restore a _QueuedJob from serialized state:
 
-    @type queue: L{JobQueue}
+    @type queue: L{_BaseJobQueue}
     @param queue: to which queue the restored job belongs
     @type state: dict
     @param state: the serialized state
@@ -518,7 +518,7 @@ class _OpExecCallbacks(mcpu.OpExecCbBase):
   def __init__(self, queue, job, op):
     """Initializes this class.
 
-    @type queue: L{JobQueue}
+    @type queue: L{_BaseJobQueue}
     @param queue: Job queue
     @type job: L{_QueuedJob}
     @param job: Job object
@@ -614,7 +614,7 @@ class _OpExecCallbacks(mcpu.OpExecCbBase):
   def SubmitManyJobs(self, jobs):
     """Submits jobs for processing.
 
-    See L{JobQueue.SubmitManyJobs}.
+    See L{_BaseJobQueue.SubmitManyJobs}.
 
     """
     # Locking is done in job queue
@@ -688,7 +688,7 @@ class _BaseJobFileChangesWaiter(object):
 
 
 class _BaseWaitForJobChangesHelper(object):
-  """Helper class using inotify to wait for changes in a job file.
+  """Helper class to wait for changes in a job file.
 
   This class takes a previous job status and serial, and alerts the client when
   the current job status has changed.
@@ -906,7 +906,7 @@ class _JobProcessor(object):
   def _CheckDependencies(queue, job, opctx):
     """Checks if an opcode has dependencies and if so, processes them.
 
-    @type queue: L{JobQueue}
+    @type queue: L{_BaseJobQueue}
     @param queue: Queue object
     @type job: L{_QueuedJob}
     @param job: Job object

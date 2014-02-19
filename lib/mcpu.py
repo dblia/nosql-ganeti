@@ -164,7 +164,7 @@ class OpExecCbBase: # pylint: disable=W0232
   def SubmitManyJobs(self, jobs):
     """Submits jobs for processing.
 
-    See L{jqueue.JobQueue.SubmitManyJobs}.
+    See L{jqueue.base._BaseJobQueue.SubmitManyJobs}.
 
     """
     raise NotImplementedError

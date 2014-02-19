@@ -1356,7 +1356,7 @@ class _BaseConfigWriter(object):
     """Attempt to expand an incomplete instance name.
 
     """
-    # Locking is done in L{ConfigWriter.GetInstanceList}
+    # Locking is done in L{_BaseConfigWriter.GetInstanceList}
     return _MatchNameComponentIgnoreCase(short_name, self.GetInstanceList())
 
   def _UnlockedGetInstanceInfo(self, instance_name):
@@ -1484,7 +1484,7 @@ class _BaseConfigWriter(object):
     """Attempt to expand an incomplete node name.
 
     """
-    # Locking is done in L{ConfigWriter.GetNodeList}
+    # Locking is done in L{_BaseConfigWriter.GetNodeList}
     return _MatchNameComponentIgnoreCase(short_name, self.GetNodeList())
 
   def _UnlockedGetNodeInfo(self, node_name):

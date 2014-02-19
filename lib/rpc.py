@@ -649,7 +649,7 @@ def _GetESFlag(cfg, nodename):
 def GetExclusiveStorageForNodeNames(cfg, nodelist):
   """Return the exclusive storage flag for all the given nodes.
 
-  @type cfg: L{config.ConfigWriter}
+  @type cfg: L{config._BaseConfigWriter}
   @param cfg: cluster configuration
   @type nodelist: list or tuple
   @param nodelist: node names for which to read the flag
@@ -686,7 +686,7 @@ class RpcRunner(_RpcClientBase,
   def __init__(self, cfg, lock_monitor_cb, _req_process_fn=None, _getents=None):
     """Initialized the RPC runner.
 
-    @type cfg: L{config.ConfigWriter}
+    @type cfg: L{config._BaseConfigWriter}
     @param cfg: Configuration
     @type lock_monitor_cb: callable
     @param lock_monitor_cb: Lock monitor callback

@@ -25,6 +25,7 @@
 # pylint: disable=W0703
 # W0703: Catching too general exception Exception
 
+import logging
 import couchdb.client
 
 from ganeti import errors
@@ -34,7 +35,7 @@ from ganeti import constants
 def URIAuth(user_info, reg_name, port):
   """Creates the authority value within a uri.
 
-  URIAuth, example: //anonymous@www.haskell.org:42
+  URIAuth, example://anonymous@www.haskell.org:42
 
   @type user_info: string
   @param user_info: user info (e.g. anonymous)
@@ -62,7 +63,7 @@ def URICreate(scheme, auth, path="", query="", fragment=""):
 
   URI, example: foo://anonymous@www.haskell.org:42/ghc?query#frag
 
-  @type sheme: string
+  @type scheme: string
   @param scheme: uri scheme (e.g. "http", "ftp" etc)
   @type auth: string
   @param auth: uri authentication token
@@ -91,21 +92,19 @@ def DeleteDB(db_name, host_ip, port):
   given. Throws an exception if the database doesn't
   exists.
 
+  @type db_name: str
+  @param db_name: the database name which i will create
   @type host_ip: str
   @param host_ip: the host ip of the couchdb server
   @type port: int
   @param port: port number
-  @type db_name: str
-  @param db_name: the database name which i will create
-  @rtype: L{couchdb.client.Database}
-  @return: the database instance
 
   """
   auth = URIAuth("", host_ip, port)
   uri = URICreate("http", auth)
-  server = couchdb.client.Server(uri)
 
   try:
+    server = couchdb.client.Server(uri)
     server.delete(db_name)
   except Exception:
     msg = ("The database (%s) in the following host IP (%s)"
@@ -174,6 +173,166 @@ def GetDBInstance(db_name, host_ip, port):
     return db
 
 
+def GetDocument(db_name, doc_id):
+  """Return the document with the specified ID.
+
+  @type db_name: L{couchdb.client.Database} instance
+  @param db_name: the database name
+  @type doc_id: str
+  @param doc_id: document's ID
+  @rtype: L{couchdb.client.Document} instance
+  @return: the requested document
+
+  """
+  try:
+    result = db_name.get(doc_id)
+  except Exception:
+    # This exception happens due to a hard CouchDB server shutdown
+    raise errors.JobQueueError("CouchDB is down, refusing job")
+
+  # The result can be either the requested document, or 'None' if no document
+  # with the ID was found
+  if not result:
+    msg = ("The document %s does not exist in database %s." % (doc_id,
+           db_name.name))
+    logging.info(msg)
+
+  return result
+
+
+def WriteDocument(db_name, data):
+  """(Over)write a document in the database given.
+
+  @type db_name: L{couchdb.client.Database} instance
+  @param db_name: the database name
+  @type data: str
+  @param data: contents of the document
+  @rtype: L{couchdb.client.Document}'s '_rev' field
+  @return: document's '_rev' field
+
+  """
+  try:
+    (_, doc_rev) = db_name.save(data)
+  except Exception:
+    # Handle conflict when document exists in the db given
+    try:
+      new_doc = GetDocument(db_name, data["_id"])
+      # Update data '_rev' field
+      data["_rev"] = new_doc["_rev"]
+      # Save it
+      (_, doc_rev) = db_name.save(data)
+    except Exception:
+      # This exception happens due to a hard CouchDB server shutdown
+      raise errors.JobQueueError("CouchDB is down, refusing job")
+
+  return doc_rev
+
+
+def DeleteDocument(db_name, data, purge=False):
+  """Deletes a document from the database given.
+
+  NOTE: delete does not remove the document completely from the database. It
+  simply adds a new document with a new revision and the '_deleted' attribute
+  set to True to the database. Old revisions are still accessible and the
+  document will be replicated.
+  On contrast, purged documents do not leave any meta-data in the storage and
+  are not replicated.
+
+  @type db_name: L{couchdb.client.Database} instance
+  @param db_name: the database name
+  @type data: str
+  @param data: contents of the document
+  @type purge: boolean
+  @param purge: performs complete removing of the given document
+
+  """
+  try:
+    if purge:
+      db_name.purge([data])
+      # In case of later checks in purged docs keep the output format.
+      #result = db_name.purge([data])
+      #result["purge_seq"]
+      #purged = result["purged"]
+      #_id = purged.keys()[0]
+      #_rev = purged[_id]
+    else:
+      db_name.delete(data)
+  except Exception, err:
+    msg = ("The document '%s' hasn't found in database '%s', or a conflict"
+           " arise: %s" % (data["_id"], db_name, err))
+    raise errors.OpPrereqError(msg)
+
+
+def ViewExec(db_name, view_name, include_docs=False):
+  """Execute a predefined view.
+
+  @type db_name: L{couchdb.client.Database} instance
+  @param db_name: the database name
+  @type view_name: str
+  @param view_name: the name of the view
+  @type include_docs: boolean
+  @param include_docs: fetch and include the documents in the view result
+  @rtype: L{couchdb.client.ViewResults}
+  @return: the view results
+
+  """
+  try:
+    return db_name.view(view_name, include_docs=include_docs)
+  except Exception:
+    # This exception happens due to a hard CouchDB server shutdown
+    raise errors.OpPrereqError("Error while executing a view function.")
+
+
+def BulkUpdateDocs(db_name, documents):
+  """Perform a bulk update or insertion of the given documents using a single
+  HTTP request.
+
+  Any check to the result of the bulk update is left to the caller method.
+
+  @type db_name: L{couchdb.client.Database} instance
+  @param db_name: the database name
+  @type documents: list of documents
+  @param documents: documents to be updated
+  @rtype: list of tuples '(boolean, _id, _rev)'
+
+  """
+  try:
+    return db_name.update(documents)
+  except Exception:
+    # This exception happens due to a hard CouchDB server shutdown
+    raise errors.JobQueueError("Error during bulk update")
+
+
+def InstRename(db_name, new_doc, old_doc):
+  """Update the data of the old document to that of the new one.
+
+  @type db_name: L{couchdb.client.Database} instance
+  @param db_name: the database name
+  @type new_doc: str
+  @param new_doc: contents of the document
+  @type old_doc: str
+  @param old_doc: contents of the document
+
+  """
+  # Remove previous revision to avoid conflicts.
+  new_doc.pop("_rev")
+  # Mark the old document for removal.
+  old_doc["_deleted"] = True
+
+  try:
+    result = BulkUpdateDocs(db_name, [new_doc, old_doc])
+  except Exception:
+    # This exception happens due to a hard CouchDB server shutdown
+    raise errors.JobQueueError("CouchDB error while renaming an instance")
+
+  for success, _id, _rev in result:
+    if success and _id == new_doc["_id"]:
+      return _rev
+
+  raise errors.OpPrereqError("Error while renaming instance '%s' to '%s'." %
+                             (old_doc["_id"], new_doc["_id"]))
+
+
 def UnlockedReplicateSetup(host_ip, node_ip, db_name, replicate):
   """This function enables or disables the replication
   between the master node and a new master candidate,
@@ -208,11 +367,11 @@ def UnlockedReplicateSetup(host_ip, node_ip, db_name, replicate):
     # That means that the candidate role has changes, so we have to
     # delete the replication document from the _replicator db.
     if replicate:
-      doc = repl_db.get(repl_doc_id)
-      repl_db.delete(doc)
+      doc = GetDocument(repl_db, repl_doc_id)
+      DeleteDocument(repl_db, doc)
     else:
-      repl_doc = {'source': master_url, 'target': cand_url,
-                  'continuous': True, 'create_target': True}
+      repl_doc = {"source": master_url, "target": cand_url,
+                  "continuous": True, "create_target": True}
       repl_db[repl_doc_id] = repl_doc
   except Exception, err:
     msg = ("Replication from source host %s, to target host %s failed: %s. %s"
@@ -255,8 +414,8 @@ def MasterFailoverDbs(old_master_ip, new_master_ip, db_name):
     if (db_name in source) and (db_name in target):
       # Delete old replication document
       old_repl_doc_id = "".join(["from_", source, "_to_", target])
-      doc = old_repl_db.get(old_repl_doc_id)
-      old_repl_db.delete(doc)
+      doc = GetDocument(old_repl_db, old_repl_doc_id)
+      DeleteDocument(old_repl_db, doc)
 
       # Create a new replication document
       if target == new_source:
@@ -265,31 +424,3 @@ def MasterFailoverDbs(old_master_ip, new_master_ip, db_name):
       repl_doc = {"source": new_source, "target": target,
                   "continuous": True, "create_target": True}
       new_repl_db[new_repl_doc_id] = repl_doc
-
-
-def WriteDocument(db_name, data):
-  """(Over)write a document in the database given.
-
-  @type db_name: L{couchdb.client.Database} instance
-  @param db_name: the database name
-  @type data: str
-  @param data: contents of the document
-  @rtype: L{couch.client.Document} '_rev' field
-  @return: document's '_rev' field
-
-  """
-  try:
-    (_, doc_rev) = db_name.save(data)
-  except Exception:
-    # Handle conflict when document exists in the db given
-    try:
-      new_doc = db_name.get(data['_id'])
-      # Update data '_rev' field
-      data['_rev'] = new_doc['_rev']
-      # Save it
-      (_, doc_rev) = db_name.save(data)
-    except Exception:
-      # This exception happens due to a hard CouchDB server shutdown
-      raise errors.JobQueueError("CouchDB is down, refusing job")
-
-  return doc_rev

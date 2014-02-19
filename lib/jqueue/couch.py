@@ -120,8 +120,7 @@ class _CouchDBJobFileChangesWaiter(_BaseJobFileChangesWaiter):
 
 
 class _CouchDBWaitForJobChangesHelper(_BaseWaitForJobChangesHelper):
-  """Helper class using CouchDB's _changes feed to wait for changes in
-  a job document.
+  """Helper class to wait for changes in a job document.
 
   This class takes a previous job status and serial, and alerts the client when
   the current job status has changed.
@@ -373,12 +372,11 @@ class CouchDBJobQueue(_BaseJobQueue):
     @param del_jobs: List containing jobs to be deleted
 
     """
+    # FIXME: Currently we do not make any check to the output of the
+    # BulkUpdateDocs function.
     try:
-      self._queue_db.update(del_jobs)
-      # FIXME: Handle conflicts when updating a job that exists
-      # in the Archive dir.
-      self._archive.update(arch_jobs)
-    # FIXME: improve error handling for that case.
+      utils.BulkUpdateDocs(self._queue_db, del_jobs)
+      utils.BulkUpdateDocs(self._archive, arch_jobs)
     except Exception, err:
       raise errors.JobQueueError("Error while renaming a job file from queue to"
                                  " archive db: ", err)
@@ -417,7 +415,7 @@ class CouchDBJobQueue(_BaseJobQueue):
     """Return all known job IDs.
 
     The method only looks at the queue database because it's a requirement
-    that all jobs are present on database (so in the _memcache we don't
+    that all jobs are present on the database (so in the _memcache we don't
     have any extra IDs).
 
     @rtype: list of L{couchdb.client.Document}
@@ -427,11 +425,11 @@ class CouchDBJobQueue(_BaseJobQueue):
     job_ids = []
 
     if archived:
-      arch_view_res = self._archive.view("queue_view/jobs")
+      arch_view_res = utils.ViewExec(self._archive, "queue_view/jobs")
       for row in arch_view_res.rows:
         job_ids.append(int(row["id"]))
 
-    view_res = self._queue_db.view("queue_view/jobs")
+    view_res = utils.ViewExec(self._queue_db, "queue_view/jobs")
     for row in view_res.rows:
       job_ids.append(int(row["id"]))
 
@@ -450,11 +448,13 @@ class CouchDBJobQueue(_BaseJobQueue):
     job_ids = []
 
     if archived:
-      arch_view_res = self._archive.view("queue_view/jobs", include_docs=True)
+      arch_view_res = \
+          utils.ViewExec(self._archive, "queue_view/jobs", include_docs=True)
       for row in arch_view_res.rows:
         job_ids.append(row["doc"])
 
-    view_res = self._queue_db.view("queue_view/jobs", include_docs=True)
+    view_res = \
+        utils.ViewExec(self._queue_db, "queue_view/jobs", include_docs=True)
     for row in view_res.rows:
       job_ids.append(row["doc"])
 
@@ -525,7 +525,7 @@ class CouchDBJobQueue(_BaseJobQueue):
 
     for db in db_names:
       try:
-        doc = db.get(str(job_id))
+        doc = utils.GetDocument(db, str(job_id))
         raw_data = doc["info"]
       except TypeError, err:
         msg = ("The job with id '%s', haven't found on db '%s'. %s" %
@@ -631,8 +631,8 @@ class CouchDBJobQueue(_BaseJobQueue):
   def _ArchiveJobsUnlocked(self, job_list):
     """Archives jobs.
 
-    @type jobs: list of L{_QueuedJob}
-    @param jobs: Job objects
+    @type job_list: list of L{_QueuedJob}
+    @param job_list: Job objects
     @rtype: int
     @return: Number of archived jobs
 
@@ -687,7 +687,7 @@ class CouchDBJobQueue(_BaseJobQueue):
     """
     logging.info("Archiving job %s", job_id)
 
-    job = self._queue_db.get(str(job_id))
+    job = utils.GetDocument(self._queue_db, str(job_id))
     if not job:
       logging.debug("Job %s not found", job_id)
       return False

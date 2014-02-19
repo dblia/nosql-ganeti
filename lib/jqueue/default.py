@@ -162,7 +162,7 @@ class _JobChangesWaiter(object):
 
 
 class _DiskWaitForJobChangesHelper(_BaseWaitForJobChangesHelper):
-  """Helper class using inotify to wait for changes in a job file.
+  """Helper class to wait for changes in a job file.
 
   This class takes a previous job status and serial, and alerts the client when
   the current job status has changed.
