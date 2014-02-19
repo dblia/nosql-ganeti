@@ -1,3 +1,27 @@
+=====================================================
+Ganeti using CouchDB as an alternative storage engine
+=====================================================
+
+General Notes
+=============
+
+A NoSQL approach to Ganeti, using Apache CouchDB as an alternative storage
+solution along with the default filesystem engine.
+
+The config.data file, the job queue, and the archive directory can be chosen
+to be saved to the CouchDB server instead of the filesystem during cluster init:
+
+$ gnt-cluster init --enabled-hypervisors=%hypervisors% --no-ssh-init \
+    --secondary-ip=%secondary_ip% (...) --backend_storage=%disk|couchdb% %CLUSTER_NAME%
+    
+If the CouchDB solution chosen, a different approach for the configuration management
+will be followed. 
+
+For more information visit the following link:
+
+  http://<to-be-updated-soon>
+
+
 Ganeti 2.7
 ==========
 
@@ -6,3 +30,78 @@ files.
 
 For a brief introduction, read the ganeti(7) manpage and the other pages
 it suggests.
+
+
+CouchDB 1.5.0 package requirements
+===================================
+
+Installing Erlang/OTP from package manager
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For CouchDB version 1.5.0 install Erlang/OTP R15B01 version
+($ apt-cache show erlang | grep Version -> Version: 1:15.b.1-dfsg-4)
+
+$ apt-get install erlang erlang-dev erlang-base erlang-base-hipe
+
+CouchDB dependencies
+~~~~~~~~~~~~~~~~~~~~
+
+Also check aptitude couchdb packet dependencies ($ apt-cache show couchdb)
+The following packages covers the default dependencies
+
+$ apt-get install libssl0.9.8 libssl-dev zlib1g zlib1g-dev lsb-base \
+    ncurses-dev libncurses-dev unixodbc unixodbc-dev xsltproc libmozjs-dev \
+    libicu-dev libmozjs185-dev libmozjs185-1.0 libjs-jquery-form libnspr4 \
+    libnspr4-0d libnspr4-dev libcurl4-openssl-dev curl
+
+Optional for building documentation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+$ apt-get install help2man python-sphinx texlive-latex-base texlive-latex-recommended \
+    texlive-latex-extra texlive-fonts-recommended texinfo
+
+Python library for CouchDB
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+$ pip install CouchDB
+
+
+Installing and Configuring CouchDB
+==================================
+
+Installation
+~~~~~~~~~~~~
+
+$ cd /usr/local/src
+$ wget http://apache.tsl.gr/couchdb/source/1.5.0/apache-couchdb-1.5.0.tar.gz
+$ tar xzvf apache-couchdb-1.5.0.tar.gz
+$ cd apache-couchdb-1.5.0/
+$ ./configure --prefix=/usr
+$ make && make check && make install
+
+
+Setting permissions
+~~~~~~~~~~~~~~~~~~~
+
+$ /usr/sbin/adduser --system --home /usr/var/lib/couchdb --no-create-home \
+    --shell /bin/bash --group --gecos "CouchDB Administrator" couchdb
+$ chown -R couchdb:couchdb /usr/etc/couchdb
+$ chown -R couchdb:couchdb /usr/var/{lib,log,run}/couchdb
+$ chmod 0770 /usr/etc/couchdb
+$ chmod 0770 /usr/var/{lib,log,run}/couchdb
+
+Start CouchDB manually
+~~~~~~~~~~~~~~~~~~~~~~
+
+$ couchdb /usr/bin/couchdb
+
+Run CouchDB as a daemon
+~~~~~~~~~~~~~~~~~~~~~~~
+
+$ ln -s /usr/etc/init.d/couchdb /etc/init.d/couchdb
+$ /etc/init.d/couchdb start
+
+Start CouchDB on system start
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+$ update-rc.d couchdb defaults
